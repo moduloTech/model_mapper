@@ -1,0 +1,13 @@
+fr:
+  errors:
+    invalid_value_error: "Le champ %{field} est invalide."
+    invalid_value_error_detailed: "Le champ %{field} est invalide : %{details}"
+    invalid_value_details:
+      single_value_only: "les listes ne sont pas autorisées."
+      invalid_enum_in_list: "au moins une des valeurs de la liste n'est pas autorisée : %{allowed}."
+      invalid_enum: "la valeur n'est pas autorisée : %{allowed}."
+      invalid_referential: "la valeur n'est pas un référentiel autorisé."
+      invalid_referential_in_list: "au moins une des valeurs de la liste n'est pas un référentiel autorisé."
+    invalid_nil_value_error: "Le champ %{field} ne peut pas être nul ou blanc."
+    invalid_format_error: "Le format du champ %{field} est invalide."
+    invalid_format_error_detailed: "Le format du champ %{field} est invalide : format attendu %{expected_format}."

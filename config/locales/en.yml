@@ -1,0 +1,13 @@
+en:
+  errors:
+    invalid_value_error: Invalid value for field %{field}
+    invalid_value_error_detailed: "Invalid value for field %{field}: %{details}"
+    invalid_value_details:
+      single_value_only: "lists are not allowed."
+      invalid_enum_in_list: "at least one value in the list is not allowed: %{allowed}."
+      invalid_enum: "value is not allowed: %{allowed}."
+      invalid_referential: "value is not an allowed referential."
+      invalid_referential_in_list: "at least one value in the list is not an allowed referential."
+    invalid_nil_value_error: "Field %{field} cannot be null or blank."
+    invalid_format_error: "Invalid format for field %{field}."
+    invalid_format_error_detailed: "Invalid format for field %{field}: expected format %{expected_format}."
