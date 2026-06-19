@@ -47,6 +47,20 @@ module ModelMapper
 
   end
 
+  # Wraps a target's own (ActiveModel/ActiveRecord) validation error(s) for a
+  # single attribute, so combined results share one shape with the mapper errors
+  # (it responds to #message and #field like the mapper's error objects).
+  class RecordError < RuntimeError
+
+    attr_reader :field
+
+    def initialize(field, message)
+      @field = field
+      super(message)
+    end
+
+  end
+
   class ValidationError < RuntimeError
 
     attr_reader :errors

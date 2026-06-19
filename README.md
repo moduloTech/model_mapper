@@ -1,6 +1,6 @@
 # ModelMapper
 
-A declarative DSL for mapping Hash/JSON parameters to Ruby objects with type validation, referential integrity checks, and optional persistence. Designed for service objects that receive external input and need to validate, transform, and assign it to a model.
+A declarative DSL for mapping Hash/JSON parameters to Ruby objects with type validation, referential integrity checks, combined record validation, and opt-in persistence. Designed for service objects that receive external input and need to validate, transform, and assign it to a model.
 
 ## Installation
 
@@ -40,12 +40,14 @@ class UpdateWidgetService
   end
 
   def call
-    map_to_model(save: true)
+    map_to_model! # validate (mapper + record) + assign; raises on invalid, never persists
   end
 end
 
 widget = Widget.find(1)
-UpdateWidgetService.new(widget, params).call
+service = UpdateWidgetService.new(widget, params)
+service.call
+widget.save! # persistence stays in the caller's hands
 ```
 
 ## DSL: `map_model`
@@ -234,12 +236,14 @@ Hooks are declared inside the `map_model` block and executed via `instance_exec`
 
 ```
 1. before_validation(source_params, target_object)
-2. -- attribute validation loop --
+2. -- attribute validation loop (mapper rules) --
+   -- if any mapper error: STOP here (target not assembled) --
 3. before_assignation(source_params, validated_params)
 4. -- assign_attributes --
-5. before_save(source_params)           # only with save: true
-6. -- persist (save!/on_save) --        # only with save: true
-7. after_save(source_params)            # only with save: true
+5. -- record validation (target.valid?), merged into the combined errors --
+6. before_save(source_params)           # only with save_to_model / save_to_model!
+7. -- persist (save/save!/on_save) --   # only with save_to_model / save_to_model!
+8. after_save(source_params)            # only with save_to_model / save_to_model!
 ```
 
 ### Signatures
@@ -270,21 +274,53 @@ map_model do
 end
 ```
 
-## Persistence
+## Entry points
 
-By default, `map_to_model` only validates and assigns attributes without saving:
+Four methods. They all run **combined validation** first (mapper rules, then the
+target's own `valid?` — see below). The `map_*` variants never persist; the
+`save_*` variants persist explicitly (opt-in). The `!` variants raise; the
+non-bang variants collect errors instead.
 
 ```ruby
-map_to_model              # validate + assign only
-map_to_model(save: true)  # validate + assign + persist
+map_to_model    # validate + assign;        non-raising → read #errors / #valid?
+map_to_model!   # validate + assign;        raises ModelMapper::ValidationError if invalid
+save_to_model   # validate + assign + save  (skipped when invalid); non-raising
+save_to_model!  # validate + assign + save! ; raises if invalid or on save failure
 ```
 
-Persistence strategy (in order of priority):
+After a non-bang call, inspect the result on the mapper instance:
+
+```ruby
+service = UpdateWidgetService.new(widget, params)
+service.map_to_model
+service.valid?   # => false
+service.errors   # => { "name" => #<ModelMapper::RecordError ...> }
+```
+
+## Combined validation
+
+ModelMapper rules and the target's own validations are reported **together**, in
+one pass and one error shape — no separate `save!`-then-rescue step.
+
+The mapper rules act as a **gate**: ModelMapper only adds the rules a model
+cannot express (payload shape, referential checks against a scope). When the
+payload is malformed, the target is **not** assembled and its own validations do
+not run (you can't validate a model built from bad input) — you get the mapper
+errors alone. Once the mapping is clean, `target.valid?` runs and any record
+errors are merged into the same `ModelMapper::ValidationError` (record errors are
+wrapped as `ModelMapper::RecordError`, one entry per attribute).
+
+This keeps ActiveRecord as the source of truth for everything it *can* express,
+with ModelMapper layered on top only for what it can't.
+
+## Persistence
+
+The `save_*` methods persist; the `map_*` methods never do. Persistence strategy
+(in order of priority):
 
 1. `on_save` hook if defined — replaces the default save
-2. `target.save!` if the target responds to it
-3. `target.save` if the target responds to it
-4. Raises `NotImplementedError` otherwise
+2. `target.save!` (from `save_to_model!`) / `target.save` (from `save_to_model`) if the target responds to it
+3. Raises `NotImplementedError` otherwise
 
 ### Supported Targets
 
@@ -353,7 +389,7 @@ When multiple attributes fail validation, all errors are collected and raised to
 
 ```ruby
 begin
-  map_to_model(save: true)
+  map_to_model!
 rescue ModelMapper::ValidationError => e
   e.errors      # => { "name" => #<InvalidNilValueError>, "quantity" => #<InvalidFormatError> }
   e.fields      # => ["name", "quantity"]
@@ -361,6 +397,9 @@ rescue ModelMapper::ValidationError => e
   e.message     # => "name: ...; quantity: ..."
 end
 ```
+
+The same applies to record (ActiveRecord) errors once mapping is clean — they are
+merged into the same `ValidationError` as `ModelMapper::RecordError` entries.
 
 Attributes that validated successfully still have their instance variables set, even when the overall validation fails.
 
@@ -371,7 +410,8 @@ RuntimeError
   |-- ModelMapper::InvalidValueError        # value not in allowed set
   |     |-- ModelMapper::InvalidNilValueError  # required value is nil/blank
   |-- ModelMapper::InvalidFormatError       # wrong format (float, integer, date)
-  |-- ModelMapper::ValidationError          # wraps multiple errors from a single map_to_model call
+  |-- ModelMapper::RecordError              # wraps the target's own (ActiveRecord) error(s) for an attribute
+  |-- ModelMapper::ValidationError          # wraps all errors (mapper + record) from a single call
 ```
 
 All errors expose a `field` attribute (String, slash-separated key path like `"infraction/zone/id"`).
