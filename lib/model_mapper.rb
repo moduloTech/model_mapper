@@ -7,7 +7,7 @@ require_relative 'model_mapper/param_config'
 require_relative 'model_mapper/config'
 
 # ModelMapper provides a declarative DSL for mapping hash/JSON parameters
-# to ActiveRecord models with optional validation and persistence.
+# to ActiveRecord models with combined validation and opt-in persistence.
 #
 # Example usage:
 #
@@ -23,14 +23,6 @@ require_relative 'model_mapper/config'
 #       from :@params
 #       to :mission
 #
-#       before_save do |params|
-#         # Custom logic before save
-#       end
-#
-#       after_save do |params|
-#         # Custom logic after save
-#       end
-#
 #       attribute :zone_id do
 #         at :infraction, :zone, :id
 #         type :referential
@@ -44,11 +36,20 @@ require_relative 'model_mapper/config'
 #         allowing [true, false]
 #       end
 #     end
-#
-#     def call
-#       map_to_model
-#     end
 #   end
+#
+# Call the mapping methods directly — no `call` wrapper needed. They return the
+# (assigned) target object:
+#
+#   # validate (mapper + record) + assign, then persist explicitly in the caller:
+#   mission = UpdateService.new(mission, params).map_to_model! # raises on invalid
+#   mission.save!
+#
+#   # non-raising variant — inspect the result:
+#   service = UpdateService.new(mission, params)
+#   service.map_to_model
+#   service.valid?  # => false
+#   service.errors  # => { "infraction/zone/id" => #<ModelMapper::InvalidValueError ...> }
 #
 module ModelMapper
 
@@ -82,12 +83,69 @@ module ModelMapper
 
   end
 
-  # Execute the mapping flow with optional validation and persistence
+  # --- Public API ----------------------------------------------------------
   #
-  # @param save [Boolean] Whether to persist the target object (default: false)
-  # @return [Object] The target object
-  # @raise [ModelMapper::InvalidValueError] If validation fails
-  def map_to_model(save: false)
+  # Four entry points. None of the `map_*` variants persist; the `save_*`
+  # variants delegate persistence to the target (opt-in — saves stay explicit
+  # for those who prefer to call `save` in the caller instead).
+  #
+  # All four run *combined* validation before returning: the ModelMapper rules
+  # first and — only once those pass — the target's own ActiveModel/ActiveRecord
+  # validations, merged into a single ModelMapper::ValidationError shape. The
+  # mapper rules act as a gate: a malformed payload is reported on its own (the
+  # target is not assembled, so its validations cannot run on bad input).
+  #
+  # The `!` variants raise ModelMapper::ValidationError when invalid. The
+  # non-bang variants never raise on validation failure — read #errors / #valid?
+  # on the mapper instance afterwards.
+
+  # Validate + assign, without persisting. Non-raising.
+  # @return [Object] the (assigned) target object
+  def map_to_model
+    target, @model_mapper_errors = run_mapping
+    target
+  end
+
+  # Validate + assign, without persisting. Raises on invalid.
+  # @return [Object] the (assigned) target object
+  # @raise [ModelMapper::ValidationError] if validation fails (mapper or record)
+  def map_to_model!
+    target = map_to_model
+    raise ModelMapper::ValidationError.new(@model_mapper_errors) if @model_mapper_errors.any?
+
+    target
+  end
+
+  # Validate + assign, then persist with #save when valid. Non-raising: the save
+  # is skipped (and false-y persistence results surface via the model) when invalid.
+  # @return [Object] the (assigned, possibly persisted) target object
+  def save_to_model
+    target = map_to_model
+    persist_with_hooks(target, self.class.model_mapper_config, bang: false) if @model_mapper_errors.empty?
+    target
+  end
+
+  # Validate + assign, then persist with #save!. Raises on invalid or save failure.
+  # @return [Object] the (assigned, persisted) target object
+  # @raise [ModelMapper::ValidationError] if validation fails (mapper or record)
+  def save_to_model!
+    target = map_to_model!
+    persist_with_hooks(target, self.class.model_mapper_config, bang: true)
+    target
+  end
+
+  # Combined validation errors collected by the last map_to_model/save_to_model
+  # call. Hash of { field => error }; each error responds to #message. Empty when valid.
+  def errors = @model_mapper_errors ||= {}
+
+  # @return [Boolean] true when the last mapping produced no combined errors
+  def valid? = errors.empty?
+
+  private
+
+  # Core mapping + combined validation. Never raises on validation failure and
+  # never persists. Returns [target, errors_hash].
+  def run_mapping
     config = self.class.model_mapper_config
     raise ArgumentError, 'No mapping configuration defined. Use map_model do...end block.' if config.nil?
 
@@ -135,10 +193,10 @@ module ModelMapper
       # Skip nil values when not required
       next if value.nil? && allow_nil
 
-      # Only include in save hash if save: true
+      # Only include in the assignment hash when this param is assignable
       next unless param_config.save?
 
-      # For referential types, extract the ID for saving
+      # For referential types, extract the ID for assignment
       validated_params[param_name] =
         if param_config.type_value == :referential && value.respond_to?(:id)
           value.id
@@ -147,7 +205,11 @@ module ModelMapper
         end
     end
 
-    raise ModelMapper::ValidationError.new(validation_errors) if validation_errors.any?
+    # Mapper rules are a gate: when the payload itself is malformed we do NOT
+    # assemble or validate the target — the model cannot be meaningfully validated
+    # from invalid input, and before_assignation must not run on bad data. The
+    # target's own validations run only once the mapping is clean.
+    return [target_object, validation_errors] if validation_errors.any?
 
     # Execute before_assignation hook in the instance context
     instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
@@ -155,17 +217,34 @@ module ModelMapper
     # Assign attributes to target
     assign_to_target(target_object, validated_params)
 
-    # Persistence (opt-in)
-    if save
-      instance_exec(source_params, &config.before_save_hook) if config.before_save_hook
-      persist_target(target_object, config)
-      instance_exec(source_params, &config.after_save_hook) if config.after_save_hook
-    end
+    # Combined validation: harvest the target's own (ActiveModel) errors
+    merge_record_errors!(validation_errors, target_object)
 
-    target_object
+    [target_object, validation_errors]
   end
 
-  private
+  # Run the target's own ActiveModel/ActiveRecord validations (without saving)
+  # and merge them into the combined error hash, one entry per attribute.
+  def merge_record_errors!(validation_errors, target)
+    return validation_errors unless target.respond_to?(:valid?) && target.respond_to?(:errors)
+
+    target.valid?
+
+    target.errors.group_by_attribute.each do |attribute, errs|
+      validation_errors[attribute.to_s] ||=
+        ModelMapper::RecordError.new(attribute.to_s, errs.map(&:message).join(', '))
+    end
+
+    validation_errors
+  end
+
+  # Wrap persistence with the before_save/after_save hooks.
+  def persist_with_hooks(target, config, bang:)
+    source_params = extract_source(config.from_source)
+    instance_exec(source_params, &config.before_save_hook) if config.before_save_hook
+    persist_target(target, config, bang:)
+    instance_exec(source_params, &config.after_save_hook) if config.after_save_hook
+  end
 
   # Assign validated params to the target object, adapting to its type
   def assign_to_target(target, params)
@@ -178,13 +257,14 @@ module ModelMapper
     end
   end
 
-  # Persist the target object using the configured strategy
-  def persist_target(target, config)
+  # Persist the target object using the configured strategy. `bang` selects
+  # save!/save when falling back to the target's own persistence.
+  def persist_target(target, config, bang: true)
     if config.on_save_hook
       instance_exec(target, &config.on_save_hook)
-    elsif target.respond_to?(:save!)
+    elsif bang && target.respond_to?(:save!)
       target.save!
-    elsif target.respond_to?(:save)
+    elsif !bang && target.respond_to?(:save)
       target.save
     else
       raise NotImplementedError,

@@ -27,7 +27,7 @@ class SimpleService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -51,7 +51,7 @@ class RequiredParamService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -76,7 +76,7 @@ class DynamicRequiredService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -102,7 +102,7 @@ class ReferentialService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -129,7 +129,7 @@ class ReferentialByFieldService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -154,7 +154,7 @@ class NoSaveParamService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -189,7 +189,7 @@ class HooksService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -213,7 +213,7 @@ class FloatService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -237,7 +237,7 @@ class IntegerService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -261,7 +261,7 @@ class BooleanService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -286,7 +286,7 @@ class CustomValidationService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -310,7 +310,7 @@ class DefaultValueService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -336,7 +336,7 @@ class DefaultOnInvalidService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -362,7 +362,7 @@ class ConditionService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -390,7 +390,7 @@ class MultipleReferentialService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -416,7 +416,7 @@ class ParentService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -452,7 +452,7 @@ class MethodSourceService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
 end
 
@@ -554,8 +554,35 @@ class OnSaveService
   end
 
   def call
-    map_to_model(save: true)
+    save_to_model!
   end
+end
+
+# Maps onto a StrictWidget, which carries its own ActiveRecord validations
+# (name presence). Used to exercise combined (mapper + record) validation.
+class StrictService
+
+  include ModelMapper
+
+  attr_reader :widget, :params
+
+  def initialize(widget, params)
+    @widget = widget
+    @params = params
+  end
+
+  map_model do
+    from :@params
+    to :widget
+
+    attribute :name
+    attribute :status do
+      at :info, :status
+      type :enumerated
+      allowing %w[active inactive archived]
+    end
+  end
+
 end
 
 # --- Tests ---
@@ -985,7 +1012,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1020,7 +1047,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1056,7 +1083,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1089,7 +1116,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1121,7 +1148,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1166,7 +1193,7 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
@@ -1205,12 +1232,105 @@ class TestModelMapper < Minitest::Test
       end
 
       def call
-        map_to_model(save: true)
+        save_to_model!
       end
     end
 
     service = klass.new({}, { name: 'Bolt' })
     assert_raises(NotImplementedError) { service.call }
+  end
+
+  # --- Combined validation (mapper rules + ActiveRecord validations) ---
+
+  def test_map_to_model_bang_raises_on_record_validation
+    # Mapper is clean (name optional, status absent) but the record requires name.
+    widget = StrictWidget.new
+    service = StrictService.new(widget, {})
+    error = assert_raises(ModelMapper::ValidationError) { service.map_to_model! }
+
+    assert_includes error.fields, 'name'
+    assert_kind_of ModelMapper::RecordError, error.errors['name']
+    assert_includes error.errors['name'].message, "can't be blank"
+  end
+
+  def test_map_to_model_non_bang_collects_record_errors_without_raising
+    widget = StrictWidget.new
+    service = StrictService.new(widget, {})
+    result = service.map_to_model # must not raise
+
+    assert_equal widget, result
+    refute service.valid?
+    assert_includes service.errors.keys, 'name'
+    assert_kind_of ModelMapper::RecordError, service.errors['name']
+  end
+
+  def test_combined_valid_payload_has_no_errors
+    widget = StrictWidget.new
+    service = StrictService.new(widget, { name: 'Bolt', info: { status: 'active' } })
+    service.map_to_model
+
+    assert service.valid?
+    assert_empty service.errors
+    assert_equal 'Bolt', widget.name
+    assert widget.new_record? # map_to_model never persists
+  end
+
+  def test_mapper_error_gates_record_validation
+    # info/status fails the mapper enum; the record (name presence) must NOT be
+    # evaluated, so 'name' is absent from the combined errors.
+    widget = StrictWidget.new
+    service = StrictService.new(widget, { info: { status: 'bogus' } })
+    service.map_to_model
+
+    assert_includes service.errors.keys, 'info/status'
+    refute_includes service.errors.keys, 'name'
+    assert_kind_of ModelMapper::InvalidValueError, service.errors['info/status']
+  end
+
+  # --- save_to_model / save_to_model! ---
+
+  def test_save_to_model_bang_persists_when_valid
+    widget = StrictWidget.new
+    service = StrictService.new(widget, { name: 'Bolt', info: { status: 'active' } })
+    result = service.save_to_model!
+
+    assert_equal widget, result
+    assert widget.persisted?
+  end
+
+  def test_save_to_model_bang_raises_and_does_not_persist_when_invalid
+    widget = StrictWidget.new
+    service = StrictService.new(widget, {})
+    assert_raises(ModelMapper::ValidationError) { service.save_to_model! }
+
+    assert widget.new_record?
+    assert_equal 0, Widget.count
+  end
+
+  def test_save_to_model_non_bang_skips_save_when_invalid
+    widget = StrictWidget.new
+    service = StrictService.new(widget, {})
+    result = service.save_to_model # must not raise
+
+    assert_equal widget, result
+    assert widget.new_record?
+    refute service.valid?
+    assert_includes service.errors.keys, 'name'
+  end
+
+  def test_save_to_model_non_bang_persists_when_valid
+    widget = StrictWidget.new
+    service = StrictService.new(widget, { name: 'Bolt' })
+    service.save_to_model
+
+    assert widget.persisted?
+    assert service.valid?
+  end
+
+  def test_valid_predicate_before_any_call
+    service = StrictService.new(StrictWidget.new, {})
+    assert_empty service.errors
+    assert service.valid?
   end
 
 end

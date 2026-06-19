@@ -52,3 +52,13 @@ end
 class Widget < ActiveRecord::Base
   belongs_to :category, optional: true
 end
+
+# Same table as Widget, but with its own ActiveRecord validations — used to
+# exercise the combined (mapper + record) validation path.
+class StrictWidget < ActiveRecord::Base
+  self.table_name = 'widgets'
+  belongs_to :category, optional: true
+
+  validates :name, presence: true
+  validates :status, inclusion: { in: %w[active inactive archived] }, allow_nil: true
+end
