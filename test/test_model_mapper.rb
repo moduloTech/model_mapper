@@ -1333,4 +1333,34 @@ class TestModelMapper < Minitest::Test
     assert service.valid?
   end
 
+  # --- Class-method shortcuts (Klass.map_to_model!(*init_args)) ---
+
+  def test_class_shortcut_returns_mapper_and_assigns_without_saving
+    widget  = StrictWidget.new
+    service = StrictService.map_to_model!(widget, { name: 'Bolt', info: { status: 'active' } })
+
+    assert_instance_of StrictService, service
+    assert_equal widget, service.widget
+    assert_equal 'Bolt', widget.name
+    assert widget.new_record?
+  end
+
+  def test_class_shortcut_bang_raises_on_invalid
+    assert_raises(ModelMapper::ValidationError) { StrictService.map_to_model!(StrictWidget.new, {}) }
+  end
+
+  def test_class_shortcut_non_bang_collects_errors_without_raising
+    service = StrictService.map_to_model(StrictWidget.new, {})
+
+    refute service.valid?
+    assert_includes service.errors.keys, 'name'
+  end
+
+  def test_class_shortcut_save_to_model_bang_persists
+    widget = StrictWidget.new
+    StrictService.save_to_model!(widget, { name: 'Bolt' })
+
+    assert widget.persisted?
+  end
+
 end

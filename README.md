@@ -297,6 +297,23 @@ service.valid?   # => false
 service.errors   # => { "name" => #<ModelMapper::RecordError ...> }
 ```
 
+### Class-method shortcuts
+
+Each entry point has a class-method shortcut that builds the mapper (forwarding the initializer
+arguments) and runs it in one call, returning the mapper instance:
+
+```ruby
+service = UpdateWidgetService.map_to_model!(widget, params)
+# equivalent to:
+service = UpdateWidgetService.new(widget, params).tap(&:map_to_model!)
+
+service.widget   # your own accessor
+service.errors   # combined errors (non-bang variants)
+```
+
+`map_to_model` / `map_to_model!` / `save_to_model` / `save_to_model!` all have a shortcut; the `!`
+variants raise exactly like their instance counterparts.
+
 ## Combined validation
 
 ModelMapper rules and the target's own validations are reported **together**, in

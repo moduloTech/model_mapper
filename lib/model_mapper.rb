@@ -81,6 +81,17 @@ module ModelMapper
       @model_mapper_config ||= superclass.respond_to?(:model_mapper_config) ? superclass.model_mapper_config : nil
     end
 
+    # One-call shortcuts: build the mapper with the given initializer args and run the matching
+    # instance method. Returns the mapper instance, so callers can read their own target accessor
+    # plus #errors / #valid?. The `!` variants raise just like their instance counterparts.
+    #
+    #   JobMapper.map_to_model!(job, params, user)
+    #   # == JobMapper.new(job, params, user).tap(&:map_to_model!)
+    def map_to_model(*args)   = new(*args).tap(&:map_to_model)
+    def map_to_model!(*args)  = new(*args).tap(&:map_to_model!)
+    def save_to_model(*args)  = new(*args).tap(&:save_to_model)
+    def save_to_model!(*args) = new(*args).tap(&:save_to_model!)
+
   end
 
   # --- Public API ----------------------------------------------------------
