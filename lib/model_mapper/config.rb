@@ -19,6 +19,7 @@ module ModelMapper
         @before_save_hook = parent_config.before_save_hook
         @after_save_hook = parent_config.after_save_hook
         @on_save_hook = parent_config.on_save_hook
+        @record_alias = parent_config.record_alias
       else
         @params = {}
         @from_source = nil
@@ -28,6 +29,7 @@ module ModelMapper
         @before_save_hook = nil
         @after_save_hook = nil
         @on_save_hook = nil
+        @record_alias = nil
       end
     end
 
@@ -75,10 +77,16 @@ module ModelMapper
       @params[name]
     end
 
-    # Validate that the configuration is complete
+    # Alias for the mapped-record accessor (e.g. `record_alias :mission` ⇒ #mission == #record).
+    # Dual-purpose: with an argument it sets the alias (DSL); without it, it reads it.
+    def record_alias(name = nil)
+      name ? (@record_alias = name) : @record_alias
+    end
+
+    # from/to are optional: they default to the standard initializer's @params / @record.
     def validate!
-      raise ArgumentError, 'from source not specified in map_model block' if @from_source.nil?
-      raise ArgumentError, 'to target not specified in map_model block' if @to_target.nil?
+      @from_source ||= :@params
+      @to_target   ||= :@record
     end
 
   end

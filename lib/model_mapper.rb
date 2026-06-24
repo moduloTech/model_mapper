@@ -13,24 +13,15 @@ require_relative 'model_mapper/config'
 #
 #   class UpdateService
 #     include ModelMapper
-#
-#     def initialize(mission, params)
-#       @mission = mission
-#       @params = params
-#     end
+#     # No initialize / from / to needed: `record` + `params` (+ kwargs) are standard, and from/to
+#     # default to @params / @record.
 #
 #     map_model do
-#       from :@params
-#       to :mission
+#       record_alias :mission   # optional: #mission == #record
 #
 #       # Persistence hooks — run by save_to_model / save_to_model! around the save.
-#       before_save do |params|
-#         # Custom logic before save
-#       end
-#
-#       after_save do |params|
-#         # Custom logic after save
-#       end
+#       before_save { |params| } # custom logic before save
+#       after_save  { |params| } # custom logic after save
 #
 #       attribute :zone_id do
 #         at :infraction, :zone, :id
@@ -39,16 +30,17 @@ require_relative 'model_mapper/config'
 #         required true
 #       end
 #
-#       attribute :is_electronic_fine do
-#         at :infraction, :electronic_fine
-#         type :enumerated
-#         allowing [true, false]
+#       # Nested object via its own sub-mapper (validated as `vehicle.*`):
+#       attribute :vehicle_attributes do
+#         at :vehicle
+#         type :association
+#         mapper VehicleMapper
 #       end
 #     end
 #   end
 #
 #   # validate (mapper + record) + assign + save! (runs before_save/after_save):
-#   mission = UpdateService.new(mission, params).save_to_model! # raises on invalid
+#   mission = UpdateService.new(mission, params, user:).save_to_model! # raises on invalid
 #
 #   # validate + assign only, then persist explicitly in the caller:
 #   mission = UpdateService.new(mission, params).map_to_model! # raises on invalid
@@ -58,7 +50,7 @@ require_relative 'model_mapper/config'
 #   service = UpdateService.new(mission, params)
 #   service.map_to_model
 #   service.valid?  # => false
-#   service.errors  # => { "infraction/zone/id" => #<ModelMapper::InvalidValueError ...> }
+#   service.errors  # => { "infraction.zone.id" => #<ModelMapper::InvalidValueError ...> }
 #
 module ModelMapper
 
@@ -70,6 +62,20 @@ module ModelMapper
     base.extend(ClassMethods)
   end
 
+  # Standard initializer: the mapped `record` + the `params`, plus any extra keyword context (e.g.
+  # `user:`) which becomes an ivar + reader. So `from`/`to` default to @params/@record and a custom
+  # initialize is rarely needed. A mapper may still define its own initialize (and call super).
+  def initialize(record, params, **kwargs)
+    @record = record
+    @params = params
+    kwargs.each do |key, value|
+      instance_variable_set(:"@#{key}", value)
+      define_singleton_method(key) { instance_variable_get(:"@#{key}") } unless respond_to?(key)
+    end
+  end
+
+  attr_reader :record, :params
+
   module ClassMethods
 
     # DSL method to define mapping configuration
@@ -80,6 +86,11 @@ module ModelMapper
       # Create or update the mapping config
       @model_mapper_config ||= Config.new(parent_config)
       @model_mapper_config.instance_eval(&block) if block
+
+      # `record_alias :mission` ⇒ define #mission as an alias of #record.
+      if (alias_name = @model_mapper_config.record_alias) && !method_defined?(alias_name)
+        define_method(alias_name) { record }
+      end
     end
 
     # Get the mapping configuration
@@ -190,6 +201,9 @@ module ModelMapper
       # Skip param if condition is not met
       next unless param_config.condition_met?(target_object, source_params, self)
 
+      # Association/array attributes are handled by sub-mappers after assignment (see below).
+      next if param_config.mapper_value
+
       begin
         allow_nil = !param_config.required?(source_params, target_object)
         value = validate_param(param_config, source_params, target_object, allow_nil)
@@ -203,7 +217,7 @@ module ModelMapper
         # otherwise re-raise as it's likely a genuine bug.
         raise if validation_errors.empty?
 
-        field = param_config.keys.join('/')
+        field = param_config.keys.join('.')
         validation_errors[field] = ModelMapper::InvalidValueError.new(field, details: e.message)
         errored_fields << param_name.to_s
         next
@@ -240,7 +254,12 @@ module ModelMapper
     # dereference values that may have failed to map).
     instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
     assign_to_target(target_object, validated_params)
-    merge_record_errors!(validation_errors, target_object, errored_fields)
+
+    # Association/array attributes: build the nested record(s) on the target and run their sub-mappers,
+    # merging their (path-prefixed) errors. Their records are validated by the sub-mappers, so the
+    # parent's own validation must not re-report them.
+    association_fields = map_associations(target_object, source_params, config, validation_errors)
+    merge_record_errors!(validation_errors, target_object, errored_fields, associations: association_fields)
 
     [target_object, validation_errors]
   end
@@ -249,7 +268,7 @@ module ModelMapper
   # the combined error hash (one entry per attribute), skipping any attribute already reported by a
   # mapper rule — the mapper owns the more specific rule (e.g. a scoped referential the model can
   # only see as "must exist").
-  def merge_record_errors!(validation_errors, target, errored_fields = [])
+  def merge_record_errors!(validation_errors, target, errored_fields = [], associations: [])
     return validation_errors unless target.respond_to?(:valid?) && target.respond_to?(:errors)
 
     target.valid?
@@ -259,11 +278,53 @@ module ModelMapper
       next if errored_fields.include?(attr) ||
               errored_fields.include?("#{attr}_id") ||
               errored_fields.include?(attr.delete_suffix('_id'))
+      # Association records are validated by their own sub-mappers — don't double-report.
+      next if associations.any? { |assoc| attr == assoc || attr.start_with?("#{assoc}.") }
 
       validation_errors[attr] ||= ModelMapper::RecordError.new(attr, errs.map(&:message).join(', '))
     end
 
     validation_errors
+  end
+
+  # Build the nested record(s) for every `type :association`/`:array` attribute on `target` and run
+  # their sub-mappers, merging each sub error under a dotted, path-prefixed key (e.g. "vehicle.immat",
+  # "missions.0.driver"). Returns the list of association names processed (so the parent skips them
+  # in merge_record_errors!). Absent payload sections are not built.
+  def map_associations(target, source_params, config, validation_errors)
+    config.params.each_with_object([]) do |(param_name, param_config), associations|
+      next unless param_config.mapper_value
+      next unless param_config.condition_met?(target, source_params, self)
+
+      assoc = param_name.to_s.delete_suffix('_attributes')
+      associations << assoc
+
+      # Only a truly absent section is skipped; a present-but-empty `{}` is built and validated (its
+      # required sub-fields then surface), and an empty array simply yields zero records.
+      sub_source = source_params.dig(*param_config.keys)
+      next if sub_source.nil?
+
+      context = param_config.with_value ? instance_exec(&param_config.with_value) : {}
+
+      if param_config.type_value == :array
+        sub_source.each_with_index do |item, index|
+          run_sub_mapper(target, assoc, item, param_config.mapper_value, context, validation_errors, index:)
+        end
+      else
+        run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors)
+      end
+    end
+  end
+
+  # Build one nested record on the target's association and map the sub-payload onto it via its
+  # sub-mapper, folding the sub-mapper's combined errors into the parent under the prefixed key.
+  def run_sub_mapper(target, assoc, sub_params, mapper_klass, context, validation_errors, index: nil)
+    sub_record = index ? target.public_send(assoc).build : target.public_send(:"build_#{assoc}")
+    prefix     = index ? "#{assoc}.#{index}." : "#{assoc}."
+
+    sub_mapper = mapper_klass.new(sub_record, sub_params, **context)
+    sub_mapper.map_to_model # non-raising: assigns the sub-record + collects its combined errors
+    sub_mapper.errors.each { |field, error| validation_errors["#{prefix}#{field}"] = error }
   end
 
   # Wrap persistence with the before_save/after_save hooks.
@@ -336,7 +397,7 @@ module ModelMapper
     value = smart_presence(value)
     value = smart_presence(default_value) if value.nil?
     value_blank = value.nil? || (value.respond_to?(:empty?) && value.empty?)
-    raise ModelMapper::InvalidNilValueError.new(keys.join('/')) if value_blank && value != false && !allow_nil
+    raise ModelMapper::InvalidNilValueError.new(keys.join('.')) if value_blank && value != false && !allow_nil
 
     if value && param_config.type_value && respond_to?("valid_#{param_config.type_value}_value?", true)
       value =
@@ -354,7 +415,7 @@ module ModelMapper
 
   def valid_float_value?(value, param_config, _source_params, _target_object)
     unless value.to_s.strip.match?(/\d+\.?\d*/)
-      raise ModelMapper::InvalidFormatError.new(param_config.keys.join('/'), expected_format: :float)
+      raise ModelMapper::InvalidFormatError.new(param_config.keys.join('.'), expected_format: :float)
     end
 
     value.to_f
@@ -362,7 +423,7 @@ module ModelMapper
 
   def valid_integer_value?(value, param_config, _source_params, _target_object)
     unless value.to_s.strip.match?(/^\d+$/)
-      raise ModelMapper::InvalidFormatError.new(param_config.keys.join('/'),
+      raise ModelMapper::InvalidFormatError.new(param_config.keys.join('.'),
                                                 expected_format: :integer)
     end
 
@@ -372,7 +433,7 @@ module ModelMapper
   def valid_date_value?(value, param_config, _source_params, _target_object)
     Time.zone.iso8601(value)
   rescue StandardError
-    raise ModelMapper::InvalidFormatError.new(param_config.keys.join('/'))
+    raise ModelMapper::InvalidFormatError.new(param_config.keys.join('.'))
   end
 
   def valid_boolean_value?(value, _param_config, _source_params, _target_object)
@@ -386,17 +447,17 @@ module ModelMapper
     if value.respond_to?(:each)
       unless param_config.multiple?
         details = I18n.t('errors.invalid_value_details.single_value_only')
-        raise ModelMapper::InvalidValueError.new(param_config.keys.join('/'), details:)
+        raise ModelMapper::InvalidValueError.new(param_config.keys.join('.'), details:)
       end
 
       unless value.all? { |v| allowed.include?(v) }
         details = I18n.t('errors.invalid_value_details.invalid_enum_in_list', allowed: allowed.join(', '))
-        raise ModelMapper::InvalidValueError.new(param_config.keys.join('/'), details:)
+        raise ModelMapper::InvalidValueError.new(param_config.keys.join('.'), details:)
       end
     else
       unless allowed.include?(value)
         details = I18n.t('errors.invalid_value_details.invalid_enum', allowed: allowed.join(', '))
-        raise ModelMapper::InvalidValueError.new(param_config.keys.join('/'), details:)
+        raise ModelMapper::InvalidValueError.new(param_config.keys.join('.'), details:)
       end
     end
 
@@ -443,7 +504,7 @@ module ModelMapper
       result
     else
       details = I18n.t('errors.invalid_value_details.invalid_referential')
-      raise ModelMapper::InvalidValueError.new(param_config.keys.join('/'), details:)
+      raise ModelMapper::InvalidValueError.new(param_config.keys.join('.'), details:)
     end
   end
 
@@ -464,7 +525,7 @@ module ModelMapper
     result_blank = result.nil? || (result.respond_to?(:empty?) && result.empty?)
     if result_blank
       details = I18n.t("errors.invalid_value_details.invalid_referential#{'_in_list' if param_config.multiple?}")
-      raise ModelMapper::InvalidValueError.new(param_config.keys.join('/'), details:)
+      raise ModelMapper::InvalidValueError.new(param_config.keys.join('.'), details:)
     end
 
     result

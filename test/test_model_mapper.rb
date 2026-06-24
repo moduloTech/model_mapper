@@ -585,6 +585,81 @@ class StrictService
 
 end
 
+# --- New API: standard initializer, record_alias, associations (no initialize / from / to) ---
+
+class ManualMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :title
+  end
+
+end
+
+class PartMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :name
+  end
+
+end
+
+# Sub-mapper whose default reads context passed down via `with:`.
+class LabeledPartMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :name do
+      default -> { label }
+    end
+  end
+
+end
+
+# Parent graph mapper: standard init (record/params/kwargs), record_alias, 1-1 + 1-N associations.
+class WidgetGraphMapper
+
+  include ModelMapper
+
+  map_model do
+    record_alias :widget
+
+    attribute :name
+
+    attribute :manual_attributes do
+      at :manual
+      type :association
+      mapper ManualMapper
+    end
+
+    attribute :parts_attributes do
+      at :parts
+      type :array
+      mapper PartMapper
+    end
+  end
+
+end
+
+# Parent passing derived context to its sub-mappers via `with:`.
+class ContextWidgetMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :parts_attributes do
+      at :parts
+      type :array
+      mapper LabeledPartMapper, with: -> { { label: label } }
+    end
+  end
+
+end
+
 # --- Tests ---
 
 class TestModelMapper < Minitest::Test
@@ -636,8 +711,8 @@ class TestModelMapper < Minitest::Test
     widget = Widget.new
     service = SimpleService.new(widget, { info: { status: 'bogus' } })
     error = assert_raises(ModelMapper::ValidationError) { service.call }
-    assert_includes error.fields, 'info/status'
-    assert_kind_of ModelMapper::InvalidValueError, error.errors['info/status']
+    assert_includes error.fields, 'info.status'
+    assert_kind_of ModelMapper::InvalidValueError, error.errors['info.status']
   end
 
   # Required params
@@ -702,8 +777,8 @@ class TestModelMapper < Minitest::Test
     widget = Widget.new
     service = ReferentialService.new(widget, { category: { id: 99_999 } })
     error = assert_raises(ModelMapper::ValidationError) { service.call }
-    assert_includes error.fields, 'category/id'
-    assert_kind_of ModelMapper::InvalidValueError, error.errors['category/id']
+    assert_includes error.fields, 'category.id'
+    assert_kind_of ModelMapper::InvalidValueError, error.errors['category.id']
   end
 
   def test_referential_rejects_disabled_record
@@ -1284,14 +1359,14 @@ class TestModelMapper < Minitest::Test
   end
 
   def test_returns_mapper_and_record_errors_together
-    # info/status fails the mapper enum AND the record fails name presence: both are returned at
+    # info.status fails the mapper enum AND the record fails name presence: both are returned at
     # once (the point of combined validation — get everything in one pass).
     widget = StrictWidget.new
     service = StrictService.new(widget, { info: { status: 'bogus' } })
     service.map_to_model
 
-    assert_includes service.errors.keys, 'info/status'                    # mapper rule
-    assert_kind_of ModelMapper::InvalidValueError, service.errors['info/status']
+    assert_includes service.errors.keys, 'info.status'                    # mapper rule
+    assert_kind_of ModelMapper::InvalidValueError, service.errors['info.status']
     assert_includes service.errors.keys, 'name'                           # record validation
     assert_kind_of ModelMapper::RecordError, service.errors['name']
   end
@@ -1322,7 +1397,7 @@ class TestModelMapper < Minitest::Test
     service = klass.new(StrictWidget.new(name: 'W'), { category: { id: 999_999 } })
     service.map_to_model
 
-    assert_includes service.errors.keys, 'category/id'        # mapper referential error
+    assert_includes service.errors.keys, 'category.id'        # mapper referential error
     refute_includes service.errors.keys, 'category'           # not duplicated by the record
   ensure
     StrictWidget.clear_validators!
@@ -1404,6 +1479,84 @@ class TestModelMapper < Minitest::Test
     StrictService.save_to_model!(widget, { name: 'Bolt' })
 
     assert widget.persisted?
+  end
+
+  # --- Standard initializer / record_alias / optional from-to ---
+
+  def test_standard_initializer_sets_record_params_and_kwarg_readers
+    widget  = Widget.new
+    service = WidgetGraphMapper.new(widget, { name: 'Bolt' }, user: :alice)
+
+    assert_equal widget, service.record
+    assert_equal({ name: 'Bolt' }, service.params)
+    assert_equal :alice, service.user            # kwarg → reader
+  end
+
+  def test_works_without_custom_initialize_from_or_to
+    widget = Widget.new
+    WidgetGraphMapper.new(widget, { name: 'Bolt' }).map_to_model
+
+    assert_equal 'Bolt', widget.name             # from/to defaulted to @params/@record
+  end
+
+  def test_record_alias_exposes_an_alias_of_record
+    widget  = Widget.new
+    service = WidgetGraphMapper.new(widget, {})
+
+    assert_equal widget, service.widget          # record_alias :widget
+    assert_equal service.record, service.widget
+  end
+
+  # --- type :association (1-1) ---
+
+  def test_association_maps_the_nested_record
+    widget = Widget.new
+    WidgetGraphMapper.new(widget, { name: 'W', manual: { title: 'Guide' } }).map_to_model
+
+    assert_equal 'Guide', widget.manual.title
+  end
+
+  def test_association_absent_is_not_built
+    widget = Widget.new
+    WidgetGraphMapper.new(widget, { name: 'W' }).map_to_model
+
+    assert_nil widget.manual
+  end
+
+  def test_association_invalid_subfield_surfaces_as_prefixed_error
+    widget  = Widget.new
+    service = WidgetGraphMapper.new(widget, { name: 'W', manual: {} }) # title missing
+    service.map_to_model
+
+    assert_includes service.errors.keys, 'manual.title'
+    refute service.valid?
+  end
+
+  # --- type :array (1-N) ---
+
+  def test_array_maps_each_record
+    widget = Widget.new
+    WidgetGraphMapper.new(widget, { parts: [{ name: 'A' }, { name: 'B' }] }).map_to_model
+
+    assert_equal %w[A B], widget.parts.map(&:name)
+  end
+
+  def test_array_invalid_element_surfaces_indexed_error_without_double_reporting
+    widget  = Widget.new
+    service = WidgetGraphMapper.new(widget, { parts: [{ name: 'A' }, {}] }) # 2nd has no name
+    service.map_to_model
+
+    assert_includes service.errors.keys, 'parts.1.name'   # indexed, dotted
+    refute_includes service.errors.keys, 'parts'          # parent does not double-report
+  end
+
+  # --- `with:` context propagation ---
+
+  def test_with_passes_derived_context_to_sub_mapper
+    widget = Widget.new
+    ContextWidgetMapper.new(widget, { parts: [{}] }, label: 'from-context').map_to_model
+
+    assert_equal 'from-context', widget.parts.first.name  # PartMapper#name defaulted to `label`
   end
 
 end
