@@ -7,7 +7,7 @@ module ModelMapper
 
     attr_reader :name
     attr_accessor :at_keys, :type_value, :field_value, :allowing_value, :required_value, :multiple_value, :save_value,
-                  :default_value, :default_on_invalid_value, :condition_value
+                  :default_value, :default_on_invalid_value, :condition_value, :mapper_value, :with_value
 
     def initialize(name)
       @name = name
@@ -21,6 +21,8 @@ module ModelMapper
       @default_value = nil
       @default_on_invalid = false
       @condition_value = nil
+      @mapper_value = nil
+      @with_value = nil
     end
 
     # DSL methods callable within param block
@@ -64,6 +66,13 @@ module ModelMapper
       @condition_value = value
     end
 
+    # Sub-mapper for `type :association` / `type :array`. `with:` is a lambda evaluated in the parent
+    # mapper to build the sub-mapper's keyword context (e.g. -> { { company: @company, user: user } }).
+    def mapper(klass, with: nil)
+      @mapper_value = klass
+      @with_value = with
+    end
+
     # Merge another ParamConfig into this one (for inheritance)
     # Only updates values that were explicitly set in the other config
     def merge!(other)
@@ -77,6 +86,8 @@ module ModelMapper
       @default_value = other.default_value if other.explicitly_set?(:default_value)
       @default_on_invalid_value = other.default_on_invalid_value if other.explicitly_set?(:default_on_invalid_value)
       @condition_value = other.condition_value if other.explicitly_set?(:condition_value)
+      @mapper_value = other.mapper_value if other.mapper_value
+      @with_value = other.with_value if other.with_value
 
       self
     end
@@ -94,6 +105,8 @@ module ModelMapper
       copy.default_value = @default_value
       copy.default_on_invalid_value = @default_on_invalid_value
       copy.condition_value = @condition_value
+      copy.mapper_value = @mapper_value
+      copy.with_value = @with_value
       copy
     end
 

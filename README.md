@@ -17,38 +17,39 @@ When used in a Rails application, the Railtie is auto-loaded and registers the g
 class UpdateWidgetService
   include ModelMapper
 
-  attr_reader :widget, :params
-
-  def initialize(widget, params)
-    @widget = widget
-    @params = params
-  end
-
+  # No initialize, no from/to needed: ModelMapper provides a standard initializer and `from`/`to`
+  # default to the mapped `record` / `params`.
   map_model do
-    from :@params          # source hash (instance variable)
-    to   :widget           # target object (method or ivar)
+    record_alias :widget     # optional: expose #widget as an alias of #record
 
     attribute :name do
       required true
     end
 
     attribute :status do
-      at :info, :status    # dig into nested hash
+      at :info, :status      # dig into nested hash
       type :enumerated
       allowing %w[active inactive archived]
     end
   end
-
-  def call
-    map_to_model! # validate (mapper + record) + assign; raises on invalid, never persists
-  end
 end
 
-widget = Widget.find(1)
-service = UpdateWidgetService.new(widget, params)
-service.call
-widget.save! # persistence stays in the caller's hands
+widget  = Widget.find(1)
+service = UpdateWidgetService.new(widget, params, user: current_user) # extra kwargs → readers
+service.map_to_model!      # validate (mapper + record) + assign; raises on invalid, never persists
+service.widget.save!       # persistence stays in the caller's hands (or use save_to_model!)
 ```
+
+## Initialization
+
+`include ModelMapper` provides a standard initializer — `Mapper.new(record, params, **context)`:
+- `record` → the mapped object (`#record`), default target of `to`.
+- `params` → the source hash (`#params`), default source of `from`.
+- every extra keyword becomes an ivar + reader (e.g. `user:` ⇒ `#user`), so mappers can carry
+  context (scoping, the current user, …) without a custom initializer.
+
+A class may still define its own `initialize` (and call `super`). `record_alias :name` exposes an
+alias of `#record` (e.g. `#widget`, `#mission`) for readability.
 
 ## DSL: `map_model`
 
@@ -56,11 +57,12 @@ The `map_model` block configures the mapping. It is evaluated at the class level
 
 ### `from` / `to`
 
-Declare where to read input and where to write output.
+**Optional** — they default to `:@params` and `:@record` (the standard initializer's `params` /
+`record`). Declare them only to read/write elsewhere.
 
 ```ruby
 map_model do
-  from :@params   # instance variable
+  from :@params   # instance variable (default)
   from :params    # method call
 
   to :widget      # method call
@@ -69,6 +71,36 @@ end
 ```
 
 Both accept a Symbol. Symbols starting with `@` are resolved as instance variables; others are sent as method calls on the service instance.
+
+### Associations: `type :association` (1‑1) and `type :array` (1‑N)
+
+Map nested objects through their own sub-mappers, à la Blueprinter. The attribute name is the
+association's nested-attributes name (`vehicle_attributes` ⇒ association `vehicle`); the sub-record
+is built on the target association and validated by its sub-mapper.
+
+```ruby
+map_model do
+  attribute :vehicle_attributes do      # 1‑1 (belongs_to / has_one)
+    at :vehicle
+    type :association
+    mapper VehicleMapper
+  end
+
+  attribute :missions_attributes do     # 1‑N (has_many)
+    at :missions
+    type :array
+    mapper MissionMapper, with: -> { { company: @company, user: user } }
+  end
+end
+```
+
+- **`mapper`** — the sub-mapper class (itself an `include ModelMapper`).
+- **`with:`** — a lambda evaluated in the parent mapper to build the sub-mapper's keyword context
+  (so derived values like a scoped company flow down). Optional.
+- Sub-mapper errors are merged into the parent under dotted, path-prefixed keys: `vehicle.immat`,
+  `missions.0.driver`. Each association's records are validated by its sub-mapper, so the parent does
+  not double-report them. An absent payload section is not built; a present-but-empty `{}` is built
+  and validated (its required sub-fields then surface).
 
 ### `attribute`
 
@@ -436,7 +468,7 @@ RuntimeError
   |-- ModelMapper::ValidationError          # wraps all errors (mapper + record) from a single call
 ```
 
-All errors expose a `field` attribute (String, slash-separated key path like `"infraction/zone/id"`).
+All errors expose a `field` attribute (String, dot-separated key path like `"infraction.zone.id"`; nested associations/arrays use `"vehicle.immat"`, `"missions.0.driver"`).
 
 `ValidationError` exposes:
 - `errors` — `Hash<String, Error>` of field => error

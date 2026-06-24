@@ -21,6 +21,17 @@ ActiveRecord::Schema.define do
     t.string :name
     t.boolean :enabled, default: true
   end
+
+  # Nested associations used to exercise type :association (has_one) and type :array (has_many).
+  create_table :manuals, force: true do |t|
+    t.integer :widget_id
+    t.string :title
+  end
+
+  create_table :parts, force: true do |t|
+    t.integer :widget_id
+    t.string :name
+  end
 end
 
 # Load i18n
@@ -49,8 +60,21 @@ class Category < ActiveRecord::Base
   scope :enabled, -> { where(enabled: true) }
 end
 
+class Manual < ActiveRecord::Base
+  belongs_to :widget, optional: true
+  validates :title, presence: true
+end
+
+class Part < ActiveRecord::Base
+  belongs_to :widget, optional: true
+  validates :name, presence: true
+end
+
 class Widget < ActiveRecord::Base
   belongs_to :category, optional: true
+  has_one  :manual
+  has_many :parts
+  accepts_nested_attributes_for :manual, :parts
 end
 
 # Same table as Widget, but with its own ActiveRecord validations — used to
