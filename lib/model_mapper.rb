@@ -100,11 +100,11 @@ module ModelMapper
   # variants delegate persistence to the target (opt-in — saves stay explicit
   # for those who prefer to call `save` in the caller instead).
   #
-  # All four run *combined* validation before returning: the ModelMapper rules
-  # first and — only once those pass — the target's own ActiveModel/ActiveRecord
-  # validations, merged into a single ModelMapper::ValidationError shape. The
-  # mapper rules act as a gate: a malformed payload is reported on its own (the
-  # target is not assembled, so its validations cannot run on bad input).
+  # All four run *combined* validation before returning, surfacing everything at once: the target's
+  # own ActiveModel/ActiveRecord validations AND the ModelMapper rules layered on top are returned
+  # TOGETHER, merged into a single ModelMapper::ValidationError shape. The model is expected to carry
+  # the bulk of the validations; the mapper adds what the model cannot express (payload shape, scoped
+  # referentials). A field already reported by a mapper rule is not duplicated by the record error.
   #
   # The `!` variants raise ModelMapper::ValidationError when invalid. The
   # non-bang variants never raise on validation failure — read #errors / #valid?
@@ -172,6 +172,7 @@ module ModelMapper
     # Validate all params and collect results
     validated_params = {}
     validation_errors = {}
+    errored_fields = [] # param names that produced a mapper error — used to dedup record errors
     config.params.each do |param_name, param_config|
       # Skip param if condition is not met
       next unless param_config.condition_met?(target_object, source_params, self)
@@ -181,6 +182,7 @@ module ModelMapper
         value = validate_param(param_config, source_params, target_object, allow_nil)
       rescue ModelMapper::InvalidValueError, ModelMapper::InvalidFormatError => e
         validation_errors[e.field] = e
+        errored_fields << param_name.to_s
         next
       rescue StandardError => e
         # Errors from user-provided lambdas (e.g. allowing, required) that depend on
@@ -190,6 +192,7 @@ module ModelMapper
 
         field = param_config.keys.join('/')
         validation_errors[field] = ModelMapper::InvalidValueError.new(field, details: e.message)
+        errored_fields << param_name.to_s
         next
       end
 
@@ -216,34 +219,41 @@ module ModelMapper
         end
     end
 
-    # Mapper rules are a gate: when the payload itself is malformed we do NOT
-    # assemble or validate the target — the model cannot be meaningfully validated
-    # from invalid input, and before_assignation must not run on bad data. The
-    # target's own validations run only once the mapping is clean.
-    return [target_object, validation_errors] if validation_errors.any?
-
-    # Execute before_assignation hook in the instance context
-    instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
-
-    # Assign attributes to target
-    assign_to_target(target_object, validated_params)
-
-    # Combined validation: harvest the target's own (ActiveModel) errors
-    merge_record_errors!(validation_errors, target_object)
+    # Combined validation — return mapper-rule errors AND the target's own (ActiveModel/ActiveRecord)
+    # errors together, so a single call surfaces everything. We assemble the target (assign the
+    # params that passed) and run its validations even when the mapper already found errors.
+    #
+    # Safety net: if the payload is already invalid, the assembly hook may not cope with the partial
+    # data (e.g. it dereferences a referential that failed). In that case we keep the mapper errors
+    # we have (the record errors can't be computed). A failure on an otherwise-clean mapping is a
+    # genuine bug and re-raises.
+    begin
+      instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
+      assign_to_target(target_object, validated_params)
+      merge_record_errors!(validation_errors, target_object, errored_fields)
+    rescue StandardError
+      raise if validation_errors.empty?
+    end
 
     [target_object, validation_errors]
   end
 
-  # Run the target's own ActiveModel/ActiveRecord validations (without saving)
-  # and merge them into the combined error hash, one entry per attribute.
-  def merge_record_errors!(validation_errors, target)
+  # Run the target's own ActiveModel/ActiveRecord validations (without saving) and merge them into
+  # the combined error hash (one entry per attribute), skipping any attribute already reported by a
+  # mapper rule — the mapper owns the more specific rule (e.g. a scoped referential the model can
+  # only see as "must exist").
+  def merge_record_errors!(validation_errors, target, errored_fields = [])
     return validation_errors unless target.respond_to?(:valid?) && target.respond_to?(:errors)
 
     target.valid?
 
     target.errors.group_by_attribute.each do |attribute, errs|
-      validation_errors[attribute.to_s] ||=
-        ModelMapper::RecordError.new(attribute.to_s, errs.map(&:message).join(', '))
+      attr = attribute.to_s
+      next if errored_fields.include?(attr) ||
+              errored_fields.include?("#{attr}_id") ||
+              errored_fields.include?(attr.delete_suffix('_id'))
+
+      validation_errors[attr] ||= ModelMapper::RecordError.new(attr, errs.map(&:message).join(', '))
     end
 
     validation_errors
