@@ -316,19 +316,25 @@ variants raise exactly like their instance counterparts.
 
 ## Combined validation
 
-ModelMapper rules and the target's own validations are reported **together**, in
-one pass and one error shape — no separate `save!`-then-rescue step.
+ModelMapper rules and the target's own validations are reported **together, at
+once**, in one pass and one error shape — no separate `save!`-then-rescue step,
+and no "fix the mapper errors first, then discover the model errors" round-trips.
 
-The mapper rules act as a **gate**: ModelMapper only adds the rules a model
-cannot express (payload shape, referential checks against a scope). When the
-payload is malformed, the target is **not** assembled and its own validations do
-not run (you can't validate a model built from bad input) — you get the mapper
-errors alone. Once the mapping is clean, `target.valid?` runs and any record
-errors are merged into the same `ModelMapper::ValidationError` (record errors are
-wrapped as `ModelMapper::RecordError`, one entry per attribute).
+The model is expected to carry **the bulk** of the validations; ModelMapper only
+adds the rules a model cannot express (payload shape, referential checks against
+a scope). On every call the mapper rules run **and** the target is assembled and
+`target.valid?` is run, so both error sets come back in the same
+`ModelMapper::ValidationError` (record errors wrapped as `ModelMapper::RecordError`,
+one entry per attribute). A field already reported by a mapper rule is **not**
+duplicated by the record error (the mapper owns the more specific rule).
 
 This keeps ActiveRecord as the source of truth for everything it *can* express,
 with ModelMapper layered on top only for what it can't.
+
+> Safety net: if the payload is already invalid, the `before_assignation` hook may
+> not cope with the partial data (e.g. it dereferences a referential that failed).
+> In that case the mapper errors are kept (the record errors can't be computed);
+> a failure on an otherwise-clean mapping re-raises as a genuine bug.
 
 ## Persistence
 

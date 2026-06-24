@@ -1057,7 +1057,9 @@ class TestModelMapper < Minitest::Test
     assert_equal 'Bolt', service.instance_variable_get(:@name)
   end
 
-  def test_before_assignation_not_called_on_errors
+  def test_before_assignation_runs_even_with_mapper_errors
+    # Combined validation assembles + validates the target even when the mapper already found errors
+    # (so record errors come back alongside the mapper ones) — before_assignation therefore runs.
     hook_called = false
     klass = Class.new do
       include ModelMapper
@@ -1073,27 +1075,20 @@ class TestModelMapper < Minitest::Test
         from :@params
         to :widget
 
-        before_assignation do |_source, _validated|
-          hook_called = true
-        end
-
         attribute :name do
           required true
         end
-      end
-
-      def call
-        save_to_model!
       end
     end
 
     # Capture the local variable via the block's closure
     klass.model_mapper_config.before_assignation { |_s, _v| hook_called = true }
 
-    widget = Widget.new
-    service = klass.new(widget, {})
-    assert_raises(ModelMapper::ValidationError) { service.call }
-    refute hook_called
+    service = klass.new(Widget.new, {})
+    service.map_to_model
+
+    assert hook_called
+    assert_includes service.errors.keys, 'name'
   end
 
   def test_before_validation_fires_before_loop
@@ -1275,16 +1270,51 @@ class TestModelMapper < Minitest::Test
     assert widget.new_record? # map_to_model never persists
   end
 
-  def test_mapper_error_gates_record_validation
-    # info/status fails the mapper enum; the record (name presence) must NOT be
-    # evaluated, so 'name' is absent from the combined errors.
+  def test_returns_mapper_and_record_errors_together
+    # info/status fails the mapper enum AND the record fails name presence: both are returned at
+    # once (the point of combined validation — get everything in one pass).
     widget = StrictWidget.new
     service = StrictService.new(widget, { info: { status: 'bogus' } })
     service.map_to_model
 
-    assert_includes service.errors.keys, 'info/status'
-    refute_includes service.errors.keys, 'name'
+    assert_includes service.errors.keys, 'info/status'                    # mapper rule
     assert_kind_of ModelMapper::InvalidValueError, service.errors['info/status']
+    assert_includes service.errors.keys, 'name'                           # record validation
+    assert_kind_of ModelMapper::RecordError, service.errors['name']
+  end
+
+  def test_record_error_is_not_duplicated_when_mapper_already_reported_the_field
+    # A referential that fails is reported once (by the mapper), not again by the model's belongs_to.
+    klass = Class.new do
+      include ModelMapper
+      attr_reader :widget, :params
+      def initialize(widget, params)
+        @widget = widget
+        @params = params
+      end
+
+      map_model do
+        from :@params
+        to :widget
+        attribute :category_id do
+          at :category, :id
+          type :referential
+          allowing Category.enabled
+        end
+      end
+    end
+    # Require the association on the record so AR would also complain about it.
+    StrictWidget.validates(:category, presence: true)
+
+    service = klass.new(StrictWidget.new(name: 'W'), { category: { id: 999_999 } })
+    service.map_to_model
+
+    assert_includes service.errors.keys, 'category/id'        # mapper referential error
+    refute_includes service.errors.keys, 'category'           # not duplicated by the record
+  ensure
+    StrictWidget.clear_validators!
+    StrictWidget.validates(:name, presence: true)
+    StrictWidget.validates(:status, inclusion: { in: %w[active inactive archived] }, allow_nil: true)
   end
 
   # --- save_to_model / save_to_model! ---
