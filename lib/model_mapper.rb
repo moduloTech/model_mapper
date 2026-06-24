@@ -111,8 +111,12 @@ module ModelMapper
   # on the mapper instance afterwards.
 
   # Validate + assign, without persisting. Non-raising.
+  # The `save:` option was removed (persistence is now explicit); passing `save: true` raises a
+  # ModelMapper::SaveOptionRemovedError pointing callers at save_to_model!.
   # @return [Object] the (assigned) target object
-  def map_to_model
+  def map_to_model(save: false)
+    raise ModelMapper::SaveOptionRemovedError if save
+
     target, @model_mapper_errors = run_mapping
     target
   end
