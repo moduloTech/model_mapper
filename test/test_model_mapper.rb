@@ -1481,6 +1481,14 @@ class TestModelMapper < Minitest::Test
     assert widget.persisted?
   end
 
+  def test_class_shortcut_forwards_keyword_context
+    widget  = Widget.new
+    service = WidgetGraphMapper.map_to_model!(widget, { name: 'Bolt' }, user: :alice)
+
+    assert_equal :alice, service.user # `...` forwarding passes the keyword context through to new
+    assert_equal 'Bolt', widget.name
+  end
+
   # --- Standard initializer / record_alias / optional from-to ---
 
   def test_standard_initializer_sets_record_params_and_kwarg_readers

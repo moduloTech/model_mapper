@@ -105,12 +105,15 @@ module ModelMapper
     # instance method. Returns the mapper instance, so callers can read their own target accessor
     # plus #errors / #valid?. The `!` variants raise just like their instance counterparts.
     #
-    #   JobMapper.map_to_model!(job, params, user)
-    #   # == JobMapper.new(job, params, user).tap(&:map_to_model!)
-    def map_to_model(*args)   = new(*args).tap(&:map_to_model)
-    def map_to_model!(*args)  = new(*args).tap(&:map_to_model!)
-    def save_to_model(*args)  = new(*args).tap(&:save_to_model)
-    def save_to_model!(*args) = new(*args).tap(&:save_to_model!)
+    #   JobMapper.map_to_model!(job, params, user: u)
+    #   # == JobMapper.new(job, params, user: u).tap(&:map_to_model!)
+    #
+    # Uses `(...)` argument forwarding so the standard initializer's keyword context (e.g. `user:`)
+    # is passed through unchanged.
+    def map_to_model(...)   = new(...).tap(&:map_to_model)
+    def map_to_model!(...)  = new(...).tap(&:map_to_model!)
+    def save_to_model(...)  = new(...).tap(&:save_to_model)
+    def save_to_model!(...) = new(...).tap(&:save_to_model!)
 
   end
 
