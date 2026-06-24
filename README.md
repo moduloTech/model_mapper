@@ -331,10 +331,9 @@ duplicated by the record error (the mapper owns the more specific rule).
 This keeps ActiveRecord as the source of truth for everything it *can* express,
 with ModelMapper layered on top only for what it can't.
 
-> Safety net: if the payload is already invalid, the `before_assignation` hook may
-> not cope with the partial data (e.g. it dereferences a referential that failed).
-> In that case the mapper errors are kept (the record errors can't be computed);
-> a failure on an otherwise-clean mapping re-raises as a genuine bug.
+> Note: the target is assembled and validated even when the mapper already found errors, so a
+> `before_assignation` hook runs on the validated *subset* — write it to tolerate partial data
+> (don't dereference a referential that may have failed to map).
 
 ## Persistence
 

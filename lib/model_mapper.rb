@@ -236,17 +236,11 @@ module ModelMapper
     # errors together, so a single call surfaces everything. We assemble the target (assign the
     # params that passed) and run its validations even when the mapper already found errors.
     #
-    # Safety net: if the payload is already invalid, the assembly hook may not cope with the partial
-    # data (e.g. it dereferences a referential that failed). In that case we keep the mapper errors
-    # we have (the record errors can't be computed). A failure on an otherwise-clean mapping is a
-    # genuine bug and re-raises.
-    begin
-      instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
-      assign_to_target(target_object, validated_params)
-      merge_record_errors!(validation_errors, target_object, errored_fields)
-    rescue StandardError
-      raise if validation_errors.empty?
-    end
+    # before_assignation runs on the validated subset, so it must tolerate partial data (don't
+    # dereference values that may have failed to map).
+    instance_exec(source_params, validated_params, &config.before_assignation_hook) if config.before_assignation_hook
+    assign_to_target(target_object, validated_params)
+    merge_record_errors!(validation_errors, target_object, errored_fields)
 
     [target_object, validation_errors]
   end
