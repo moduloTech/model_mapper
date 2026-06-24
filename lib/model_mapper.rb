@@ -23,6 +23,15 @@ require_relative 'model_mapper/config'
 #       from :@params
 #       to :mission
 #
+#       # Persistence hooks — run by save_to_model / save_to_model! around the save.
+#       before_save do |params|
+#         # Custom logic before save
+#       end
+#
+#       after_save do |params|
+#         # Custom logic after save
+#       end
+#
 #       attribute :zone_id do
 #         at :infraction, :zone, :id
 #         type :referential
@@ -38,10 +47,10 @@ require_relative 'model_mapper/config'
 #     end
 #   end
 #
-# Call the mapping methods directly — no `call` wrapper needed. They return the
-# (assigned) target object:
+#   # validate (mapper + record) + assign + save! (runs before_save/after_save):
+#   mission = UpdateService.new(mission, params).save_to_model! # raises on invalid
 #
-#   # validate (mapper + record) + assign, then persist explicitly in the caller:
+#   # validate + assign only, then persist explicitly in the caller:
 #   mission = UpdateService.new(mission, params).map_to_model! # raises on invalid
 #   mission.save!
 #
