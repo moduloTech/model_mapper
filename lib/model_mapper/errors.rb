@@ -2,6 +2,17 @@
 
 module ModelMapper
 
+  # Raised when a caller still uses the removed `map_to_model(save: true)` option. Persistence is now
+  # an explicit choice: use save_to_model! (validate + save!) or save_to_model (validate + save).
+  class SaveOptionRemovedError < RuntimeError
+
+    def initialize(msg = nil)
+      super(msg || 'map_to_model no longer persists: the `save:` option was removed. ' \
+                   'Use `save_to_model!` (validate + save!) or `save_to_model` (validate + save) instead.')
+    end
+
+  end
+
   class InvalidValueError < RuntimeError
 
     attr_reader :field, :details

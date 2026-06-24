@@ -1270,6 +1270,19 @@ class TestModelMapper < Minitest::Test
     assert widget.new_record? # map_to_model never persists
   end
 
+  def test_map_to_model_save_true_raises_removed_option_error
+    service = SimpleService.new(Widget.new, { name: 'Bolt' })
+    assert_raises(ModelMapper::SaveOptionRemovedError) { service.map_to_model(save: true) }
+  end
+
+  def test_map_to_model_save_false_is_still_accepted
+    widget = Widget.new
+    SimpleService.new(widget, { name: 'Bolt' }).map_to_model(save: false)
+
+    assert_equal 'Bolt', widget.name
+    assert widget.new_record? # accepted, behaves like map_to_model (no save)
+  end
+
   def test_returns_mapper_and_record_errors_together
     # info/status fails the mapper enum AND the record fails name presence: both are returned at
     # once (the point of combined validation — get everything in one pass).
