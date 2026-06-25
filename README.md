@@ -27,7 +27,7 @@ class UpdateWidgetService
     end
 
     attribute :status do
-      at :info, :status      # dig into nested hash
+      from :info, :status      # dig into nested hash
       type :enumerated
       allowing %w[active inactive archived]
     end
@@ -81,22 +81,22 @@ is built on the target association and validated by its sub-mapper.
 ```ruby
 map_model do
   attribute :vehicle_attributes do      # 1‑1 (belongs_to / has_one)
-    at :vehicle
+    from :vehicle
     type :association
-    mapper VehicleMapper
+    with VehicleMapper
   end
 
   attribute :missions_attributes do     # 1‑N (has_many)
-    at :missions
+    from :missions
     type :array
-    mapper MissionMapper, with: -> { { company: @company, user: user } }
+    with MissionMapper, -> { { company: company, user: user } }
   end
 end
 ```
 
-- **`mapper`** — the sub-mapper class (itself an `include ModelMapper`).
-- **`with:`** — a lambda evaluated in the parent mapper to build the sub-mapper's keyword context
-  (so derived values like a scoped company flow down). Optional.
+- **`with SubMapper`** — the sub-mapper class (itself an `include ModelMapper`).
+- **second argument** — an optional lambda evaluated in the parent mapper to build the sub-mapper's
+  keyword context (so derived values like a scoped company flow down).
 - Sub-mapper errors are merged into the parent under dotted, path-prefixed keys: `vehicle.immat`,
   `missions.0.driver`. Each association's records are validated by its sub-mapper, so the parent does
   not double-report them. An absent payload section is not built; a present-but-empty `{}` is built
@@ -104,7 +104,7 @@ end
 
 ### Arrays of scalars: `type :array` + `of`
 
-`type :array` always needs an **explicit, mandatory** element strategy — `mapper` (array of records,
+`type :array` always needs an **explicit, mandatory** element strategy — `with` (array of records,
 above) or `of` (array of scalars). Declaring `type :array` with neither, with both, or `of` outside
 an array raises `ModelMapper::ConfigurationError` on the first map.
 
@@ -126,7 +126,7 @@ attribute :statuses do
 end
 
 attribute :category_ids do
-  at :categories
+  from :categories
   type :array
   of :referential
   allowing Category.all       # each element looked up; assigned as an array of ids
@@ -146,19 +146,24 @@ Declares a parameter to validate and map. Without a block, it reads `source[name
 ```ruby
 attribute :name                       # simple pass-through
 attribute :zone_id do                 # with options
-  at :infraction, :zone, :id
+  from :infraction, :zone, :id
   type :referential
   allowing Zone.enabled
   required true
 end
 ```
 
+> **Deprecation:** `at` is the former name of `from` and still works, but emits a deprecation warning.
+> Prefer `from`.
+
 ## Attribute Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `at` | `*keys` | `[name]` | Key path for `Hash#dig` into the source params |
+| `from` | `*keys` | `[name]` | Key path for `Hash#dig` into the source params (was `at`) |
 | `type` | Symbol | `nil` | Validation type (see below) |
+| `with` | class, lambda | `nil` | Sub-mapper (+ optional context lambda) for `type :association` / `:array` |
+| `of` | Symbol | `nil` | Element type for a `type :array` of scalars |
 | `allowing` | various | `nil` | Allowed values — Array, AR scope, or lambda |
 | `required` | Bool / Proc | `false` | Whether `nil`/blank raises an error |
 | `field` | Symbol | `:id` | Lookup field for `:referential` type |
@@ -228,14 +233,14 @@ Looks up an ActiveRecord record by the given value. The `allowing` scope constra
 
 ```ruby
 attribute :zone_id do
-  at :zone, :id
+  from :zone, :id
   type :referential
   allowing Zone.enabled
 end
 
 # Lookup by a custom field:
 attribute :category_id do
-  at :category, :name
+  from :category, :name
   type :referential
   field :name
   allowing Category.enabled

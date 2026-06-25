@@ -24,7 +24,7 @@ require_relative 'model_mapper/config'
 #       after_save  { |params| } # custom logic after save
 #
 #       attribute :zone_id do
-#         at :infraction, :zone, :id
+#         from :infraction, :zone, :id
 #         type :referential
 #         allowing Zone.enabled
 #         required true
@@ -32,9 +32,9 @@ require_relative 'model_mapper/config'
 #
 #       # Nested object via its own sub-mapper (validated as `vehicle.*`):
 #       attribute :vehicle_attributes do
-#         at :vehicle
+#         from :vehicle
 #         type :association
-#         mapper VehicleMapper
+#         with VehicleMapper
 #       end
 #     end
 #   end

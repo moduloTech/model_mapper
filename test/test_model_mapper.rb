@@ -20,7 +20,7 @@ class SimpleService
 
     attribute :name
     attribute :status do
-      at :info, :status
+      from :info, :status
       type :enumerated
       allowing %w[active inactive archived]
     end
@@ -95,7 +95,7 @@ class ReferentialService
     to :widget
 
     attribute :category_id do
-      at :category, :id
+      from :category, :id
       type :referential
       allowing Category.enabled
     end
@@ -121,7 +121,7 @@ class ReferentialByFieldService
     to :widget
 
     attribute :category_id do
-      at :category, :name
+      from :category, :name
       type :referential
       field :name
       allowing Category.enabled
@@ -381,7 +381,7 @@ class MultipleReferentialService
     to :widget
 
     attribute :categories do
-      at :category_ids
+      from :category_ids
       type :referential
       multiple true
       allowing Category.enabled
@@ -472,7 +472,7 @@ class MappingOnlyService
 
     attribute :name
     attribute :status do
-      at :info, :status
+      from :info, :status
       type :enumerated
       allowing %w[active inactive archived]
     end
@@ -577,7 +577,7 @@ class StrictService
 
     attribute :name
     attribute :status do
-      at :info, :status
+      from :info, :status
       type :enumerated
       allowing %w[active inactive archived]
     end
@@ -631,15 +631,15 @@ class WidgetGraphMapper
     attribute :name
 
     attribute :manual_attributes do
-      at :manual
+      from :manual
       type :association
-      mapper ManualMapper
+      with ManualMapper
     end
 
     attribute :parts_attributes do
-      at :parts
+      from :parts
       type :array
-      mapper PartMapper
+      with PartMapper
     end
   end
 
@@ -652,9 +652,9 @@ class ContextWidgetMapper
 
   map_model do
     attribute :parts_attributes do
-      at :parts
+      from :parts
       type :array
-      mapper LabeledPartMapper, with: -> { { label: label } }
+      with LabeledPartMapper, -> { { label: label } }
     end
   end
 
@@ -697,7 +697,7 @@ class ArrayRefMapper
 
   map_model do
     attribute :category_ids do
-      at :categories
+      from :categories
       type :array
       of :referential
       allowing Category.all
@@ -727,7 +727,7 @@ class ArrayBothStrategiesMapper
     attribute :parts do
       type :array
       of :integer
-      mapper PartMapper
+      with PartMapper
     end
   end
 
@@ -1483,7 +1483,7 @@ class TestModelMapper < Minitest::Test
         from :@params
         to :widget
         attribute :category_id do
-          at :category, :id
+          from :category, :id
           type :referential
           allowing Category.enabled
         end
@@ -1757,6 +1757,26 @@ class TestModelMapper < Minitest::Test
     assert_raises(ModelMapper::ConfigurationError) do
       ArrayUnknownOfMapper.new(Widget.new, { numbers: [1] }).map_to_model
     end
+  end
+
+  # --- `at` deprecation (superseded by `from`) ---
+
+  def test_at_is_deprecated_but_still_maps
+    klass = nil
+    assert_output(nil, /`at` is deprecated/) do
+      klass = Class.new do
+        include ModelMapper
+        map_model do
+          attribute :status do
+            at :info, :status   # deprecated alias of `from`
+          end
+        end
+      end
+    end
+
+    widget = Widget.new
+    klass.new(widget, { info: { status: 'active' } }).map_to_model
+    assert_equal 'active', widget.status
   end
 
 end
