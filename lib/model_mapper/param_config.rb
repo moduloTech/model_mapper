@@ -27,8 +27,18 @@ module ModelMapper
     end
 
     # DSL methods callable within param block
-    def at(*keys)
+
+    # Path into the source params where this attribute's value is read (defaults to [name]).
+    #   from :infraction, :zone, :id   # reads source.dig(:infraction, :zone, :id)
+    def from(*keys)
       @at_keys = keys.flatten
+    end
+
+    # @deprecated Use {#from} instead. Kept working for backward compatibility, but emits a
+    #   deprecation warning (once per declaration, at class load).
+    def at(*keys)
+      warn "[ModelMapper] `at` is deprecated; use `from` instead (attribute `#{@name}`)."
+      from(*keys)
     end
 
     def type(value)
@@ -67,11 +77,13 @@ module ModelMapper
       @condition_value = value
     end
 
-    # Sub-mapper for `type :association` / `type :array`. `with:` is a lambda evaluated in the parent
-    # mapper to build the sub-mapper's keyword context (e.g. -> { { company: @company, user: user } }).
-    def mapper(klass, with: nil)
-      @mapper_value = klass
-      @with_value = with
+    # Sub-mapper for `type :association` / `type :array`, with an optional context lambda evaluated in
+    # the parent mapper to build the sub-mapper's keyword context:
+    #   with VehicleMapper
+    #   with MissionMapper, -> { { company: company, user: user } }
+    def with(mapper_klass, context = nil)
+      @mapper_value = mapper_klass
+      @with_value = context
     end
 
     # Element strategy for `type :array` of scalars: the element type each value is validated/coerced
