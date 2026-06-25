@@ -240,10 +240,12 @@ module ModelMapper
       # Only include in the assignment hash when this param is assignable
       next unless param_config.save?
 
-      # For referential types, extract the ID for assignment
+      # For referential types, extract the ID for assignment (scalar → id, array → array of ids).
       validated_params[param_name] =
         if param_config.type_value == :referential && value.respond_to?(:id)
           value.id
+        elsif param_config.type_value == :array && param_config.of_value == :referential
+          value.map { |element| element.respond_to?(:id) ? element.id : element }
         else
           value
         end
@@ -441,6 +443,51 @@ module ModelMapper
 
   def valid_boolean_value?(value, _param_config, _source_params, _target_object)
     value.to_bool
+  end
+
+  def valid_string_value?(value, _param_config, _source_params, _target_object)
+    value.to_s
+  end
+
+  # Validate a `type :array` of scalars: the value must be an array, and each element is validated and
+  # coerced through the element type declared with `of` (any scalar `valid_*_value?` strategy, or
+  # :any to accept elements unchanged). Fails fast on the first invalid element, with an indexed field
+  # path (e.g. "tag_ids.2"). `type :array` + `mapper` (array of records) never reaches here — it is
+  # handled by the association path.
+  def valid_array_value?(value, param_config, source_params, target_object)
+    unless value.is_a?(Array)
+      raise ModelMapper::InvalidFormatError.new(param_config.keys.join('.'), expected_format: :array)
+    end
+
+    element_type = param_config.of_value
+    return value if element_type == :any
+
+    validator = :"valid_#{element_type}_value?"
+    value.each_with_index.map do |element, index|
+      validate_array_element(element, index, validator, param_config, source_params, target_object)
+    end
+  end
+
+  # Validate one array element through the element validator, re-keying any error with the element
+  # index so the failing position surfaces (e.g. "tag_ids.2").
+  def validate_array_element(element, index, validator, param_config, source_params, target_object)
+    return element unless respond_to?(validator, true)
+
+    send(validator, element, param_config, source_params, target_object)
+  rescue ModelMapper::InvalidValueError, ModelMapper::InvalidFormatError => e
+    raise reindex_array_error(e, "#{param_config.keys.join('.')}.#{index}")
+  end
+
+  # Rebuild an element error under an indexed field, preserving its kind and details.
+  def reindex_array_error(error, field)
+    case error
+    when ModelMapper::InvalidNilValueError
+      ModelMapper::InvalidNilValueError.new(field)
+    when ModelMapper::InvalidValueError
+      ModelMapper::InvalidValueError.new(field, details: error.details)
+    else
+      ModelMapper::InvalidFormatError.new(field, expected_format: error.expected_format)
+    end
   end
 
   # Validates an enumerated field (validates against a list of allowed values)

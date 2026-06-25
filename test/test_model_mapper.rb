@@ -660,6 +660,104 @@ class ContextWidgetMapper
 
 end
 
+# `type :array` + `of` (arrays of scalars), one attribute per element strategy.
+class ArrayWidgetMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :numbers do
+      type :array
+      of :integer
+    end
+
+    attribute :codes do
+      type :array
+      of :string
+    end
+
+    attribute :statuses do
+      type :array
+      of :enumerated
+      allowing %w[open closed]
+    end
+
+    attribute :anything do
+      type :array
+      of :any
+    end
+  end
+
+end
+
+# `type :array` + `of :referential` — each element resolved against the scope, assigned as ids.
+class ArrayRefMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :category_ids do
+      at :categories
+      type :array
+      of :referential
+      allowing Category.all
+    end
+  end
+
+end
+
+# Misconfigured mappers — validate! raises ConfigurationError on the first map.
+class ArrayNoStrategyMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :numbers do
+      type :array
+    end
+  end
+
+end
+
+class ArrayBothStrategiesMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :parts do
+      type :array
+      of :integer
+      mapper PartMapper
+    end
+  end
+
+end
+
+class OfWithoutArrayMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :numbers do
+      of :integer
+    end
+  end
+
+end
+
+class ArrayUnknownOfMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :numbers do
+      type :array
+      of :uuid
+    end
+  end
+
+end
+
 # --- Tests ---
 
 class TestModelMapper < Minitest::Test
@@ -1565,6 +1663,100 @@ class TestModelMapper < Minitest::Test
     ContextWidgetMapper.new(widget, { parts: [{}] }, label: 'from-context').map_to_model
 
     assert_equal 'from-context', widget.parts.first.name  # PartMapper#name defaulted to `label`
+  end
+
+  # --- `type :array` + `of` (arrays of scalars) ---
+
+  def test_array_of_integer_coerces_each_element
+    widget = Widget.new
+    ArrayWidgetMapper.new(widget, { numbers: %w[1 2 3] }).map_to_model
+
+    assert_equal [1, 2, 3], widget.numbers
+  end
+
+  def test_array_of_string_coerces_each_element
+    widget = Widget.new
+    ArrayWidgetMapper.new(widget, { codes: [1, 2] }).map_to_model
+
+    assert_equal %w[1 2], widget.codes
+  end
+
+  def test_array_of_enumerated_validates_each_element
+    widget = Widget.new
+    ArrayWidgetMapper.new(widget, { statuses: %w[open closed] }).map_to_model
+
+    assert_equal %w[open closed], widget.statuses
+  end
+
+  def test_array_of_any_passes_elements_through
+    widget = Widget.new
+    ArrayWidgetMapper.new(widget, { anything: [1, 'x', nil] }).map_to_model
+
+    assert_equal [1, 'x', nil], widget.anything
+  end
+
+  def test_array_invalid_scalar_element_surfaces_indexed_error
+    widget  = Widget.new
+    service = ArrayWidgetMapper.new(widget, { numbers: ['1', 'x', '3'] })
+    service.map_to_model
+
+    refute service.valid?
+    assert_includes service.errors.keys, 'numbers.1'
+  end
+
+  def test_array_of_referential_resolves_each_element_to_ids
+    a = Category.create!(name: 'A')
+    b = Category.create!(name: 'B')
+    widget = Widget.new
+    ArrayRefMapper.new(widget, { categories: [a.id, b.id] }).map_to_model
+
+    assert_equal [a.id, b.id], widget.category_ids
+  end
+
+  def test_array_of_referential_unknown_element_surfaces_indexed_error
+    a = Category.create!(name: 'A')
+    widget  = Widget.new
+    service = ArrayRefMapper.new(widget, { categories: [a.id, 999_999] })
+    service.map_to_model
+
+    refute service.valid?
+    assert_includes service.errors.keys, 'categories.1'
+  end
+
+  def test_array_non_array_value_is_a_format_error
+    widget  = Widget.new
+    service = ArrayWidgetMapper.new(widget, { numbers: 'not-an-array' })
+    service.map_to_model
+
+    refute service.valid?
+    assert_includes service.errors.keys, 'numbers'
+  end
+
+  # --- `type :array` configuration guards ---
+
+  def test_array_without_strategy_raises_configuration_error
+    error = assert_raises(ModelMapper::ConfigurationError) do
+      ArrayNoStrategyMapper.new(Widget.new, { numbers: [1] }).map_to_model
+    end
+    assert_match(/requires `mapper`.*or `of`/, error.message)
+  end
+
+  def test_array_with_both_strategies_raises_configuration_error
+    assert_raises(ModelMapper::ConfigurationError) do
+      ArrayBothStrategiesMapper.new(Widget.new, { parts: [{}] }).map_to_model
+    end
+  end
+
+  def test_of_without_array_raises_configuration_error
+    assert_raises(ModelMapper::ConfigurationError) do
+      OfWithoutArrayMapper.new(Widget.new, { numbers: [1] }).map_to_model
+    end
+  end
+
+  def test_array_unknown_of_type_raises_configuration_error
+    assert_raises(ModelMapper::ConfigurationError) do
+      ArrayUnknownOfMapper.new(Widget.new, { numbers: [1] }).map_to_model
+    end
   end
 
 end

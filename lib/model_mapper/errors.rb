@@ -42,7 +42,7 @@ module ModelMapper
 
   class InvalidFormatError < RuntimeError
 
-    attr_reader :field
+    attr_reader :field, :expected_format
 
     def initialize(field, expected_format: nil)
       message =
@@ -53,8 +53,15 @@ module ModelMapper
         end
       super(message)
 
-      @field = field
+      @field           = field
+      @expected_format = expected_format
     end
+
+  end
+
+  # Raised at mapping time when the DSL configuration is invalid — e.g. `type :array` declared
+  # without an element strategy (`mapper` for records, `of` for scalars), or with an unknown `of`.
+  class ConfigurationError < RuntimeError
 
   end
 

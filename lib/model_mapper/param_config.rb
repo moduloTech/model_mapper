@@ -7,7 +7,7 @@ module ModelMapper
 
     attr_reader :name
     attr_accessor :at_keys, :type_value, :field_value, :allowing_value, :required_value, :multiple_value, :save_value,
-                  :default_value, :default_on_invalid_value, :condition_value, :mapper_value, :with_value
+                  :default_value, :default_on_invalid_value, :condition_value, :mapper_value, :with_value, :of_value
 
     def initialize(name)
       @name = name
@@ -23,6 +23,7 @@ module ModelMapper
       @condition_value = nil
       @mapper_value = nil
       @with_value = nil
+      @of_value = nil
     end
 
     # DSL methods callable within param block
@@ -73,6 +74,13 @@ module ModelMapper
       @with_value = with
     end
 
+    # Element strategy for `type :array` of scalars: the element type each value is validated/coerced
+    # through (any scalar type — :referential, :string, :integer, :float, :date, :boolean,
+    # :enumerated, :custom — or :any to accept elements as-is). Mutually exclusive with `mapper`.
+    def of(value)
+      @of_value = value
+    end
+
     # Merge another ParamConfig into this one (for inheritance)
     # Only updates values that were explicitly set in the other config
     def merge!(other)
@@ -88,6 +96,7 @@ module ModelMapper
       @condition_value = other.condition_value if other.explicitly_set?(:condition_value)
       @mapper_value = other.mapper_value if other.mapper_value
       @with_value = other.with_value if other.with_value
+      @of_value = other.of_value if other.of_value
 
       self
     end
@@ -107,6 +116,7 @@ module ModelMapper
       copy.condition_value = @condition_value
       copy.mapper_value = @mapper_value
       copy.with_value = @with_value
+      copy.of_value = @of_value
       copy
     end
 
