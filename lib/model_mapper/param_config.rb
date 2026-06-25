@@ -174,6 +174,21 @@ module ModelMapper
       @default_on_invalid_value
     end
 
+    # Whether this param maps a collection (`type :array`).
+    def array?
+      @type_value == :array
+    end
+
+    # Whether a sub-mapper was declared (`with SubMapper`) — array of records / association.
+    def mapper?
+      !@mapper_value.nil?
+    end
+
+    # Whether an element type was declared (`of :integer`) — array of scalars.
+    def of?
+      !@of_value.nil?
+    end
+
     # Check if the condition for processing this param is met
     # @param target_object [Object] The target object (e.g., mission)
     # @param source_params [Hash] The source parameters

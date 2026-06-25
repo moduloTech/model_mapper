@@ -99,27 +99,23 @@ module ModelMapper
     # `type :array` must declare exactly one element strategy: `mapper` (array of records) or `of`
     # (array of scalars). `of` is also rejected outside an array, and must name a known element type.
     def validate_array_param!(param_config)
-      is_array = param_config.type_value == :array
-      has_of   = !param_config.of_value.nil?
-
-      if has_of && !is_array
+      if param_config.of? && !param_config.array?
         raise ModelMapper::ConfigurationError,
               "attribute `#{param_config.name}`: `of` is only valid with `type :array`"
       end
 
-      return unless is_array
+      return unless param_config.array?
 
-      has_mapper = !param_config.mapper_value.nil?
-      if has_mapper && has_of
+      if param_config.mapper? && param_config.of?
         raise ModelMapper::ConfigurationError,
               "attribute `#{param_config.name}`: `type :array` takes either `mapper` or `of`, not both"
       end
-      unless has_mapper || has_of
+      unless param_config.mapper? || param_config.of?
         raise ModelMapper::ConfigurationError,
               "attribute `#{param_config.name}`: `type :array` requires `mapper` (array of records) " \
               'or `of` (array of scalars)'
       end
-      if has_of && !ARRAY_ELEMENT_TYPES.include?(param_config.of_value)
+      if param_config.of? && !ARRAY_ELEMENT_TYPES.include?(param_config.of_value)
         raise ModelMapper::ConfigurationError,
               "attribute `#{param_config.name}`: unknown `of` type #{param_config.of_value.inspect} " \
               "(expected one of #{ARRAY_ELEMENT_TYPES.join(', ')})"

@@ -205,7 +205,7 @@ module ModelMapper
       next unless param_config.condition_met?(target_object, source_params, self)
 
       # Association/array attributes are handled by sub-mappers after assignment (see below).
-      next if param_config.mapper_value
+      next if param_config.mapper?
 
       begin
         allow_nil = !param_config.required?(source_params, target_object)
@@ -244,7 +244,7 @@ module ModelMapper
       validated_params[param_name] =
         if param_config.type_value == :referential && value.respond_to?(:id)
           value.id
-        elsif param_config.type_value == :array && param_config.of_value == :referential
+        elsif param_config.array? && param_config.of_value == :referential
           value.map { |element| element.respond_to?(:id) ? element.id : element }
         else
           value
@@ -298,7 +298,7 @@ module ModelMapper
   # in merge_record_errors!). Absent payload sections are not built.
   def map_associations(target, source_params, config, validation_errors)
     config.params.each_with_object([]) do |(param_name, param_config), associations|
-      next unless param_config.mapper_value
+      next unless param_config.mapper?
       next unless param_config.condition_met?(target, source_params, self)
 
       assoc = param_name.to_s.delete_suffix('_attributes')
@@ -311,7 +311,7 @@ module ModelMapper
 
       context = param_config.with_value ? instance_exec(&param_config.with_value) : {}
 
-      if param_config.type_value == :array
+      if param_config.array?
         sub_source.each_with_index do |item, index|
           run_sub_mapper(target, assoc, item, param_config.mapper_value, context, validation_errors, index:)
         end
