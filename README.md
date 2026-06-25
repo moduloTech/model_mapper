@@ -102,6 +102,43 @@ end
   not double-report them. An absent payload section is not built; a present-but-empty `{}` is built
   and validated (its required sub-fields then surface).
 
+### Arrays of scalars: `type :array` + `of`
+
+`type :array` always needs an **explicit, mandatory** element strategy — `mapper` (array of records,
+above) or `of` (array of scalars). Declaring `type :array` with neither, with both, or `of` outside
+an array raises `ModelMapper::ConfigurationError` on the first map.
+
+`of` names the element type, validated/coerced per element through the same machinery as the scalar
+types: `:referential`, `:string`, `:integer`, `:float`, `:date`, `:boolean`, `:enumerated`,
+`:custom`, or `:any` (accept elements unchanged). Validation fails fast on the first bad element, with
+an indexed field path (e.g. `numbers.2`).
+
+```ruby
+attribute :numbers do
+  type :array
+  of :integer                 # ["1","2"] => [1, 2]; a non-integer element => "numbers.<i>" error
+end
+
+attribute :statuses do
+  type :array
+  of :enumerated
+  allowing %w[open closed]    # the attribute's `allowing` is applied to each element
+end
+
+attribute :category_ids do
+  at :categories
+  type :array
+  of :referential
+  allowing Category.all       # each element looked up; assigned as an array of ids
+end
+```
+
+- The attribute's `allowing` / `field` apply to every element (so `:referential` / `:enumerated`
+  elements share one scope).
+- `of :referential` assigns the array of resolved **ids** (mirroring the scalar referential).
+- An empty array is treated as blank (like any empty value): dropped when optional, an error when
+  `required`.
+
 ### `attribute`
 
 Declares a parameter to validate and map. Without a block, it reads `source[name]` and assigns it directly to the target.

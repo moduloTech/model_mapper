@@ -75,6 +75,9 @@ class Widget < ActiveRecord::Base
   has_one  :manual
   has_many :parts
   accepts_nested_attributes_for :manual, :parts
+
+  # Virtual attributes used to exercise `type :array` + `of` (arrays of scalars).
+  attr_accessor :numbers, :codes, :statuses, :anything, :category_ids
 end
 
 # Same table as Widget, but with its own ActiveRecord validations — used to
