@@ -138,6 +138,52 @@ class ConditionalCategoryMapper
 
 end
 
+# A reference is exposed through an auto-reader, read by name in a LATER attribute (no manual
+# attr_reader). Mirrors JobMapper resolving `call_origin` then reading it in downstream attributes.
+class DownstreamReaderMapper
+
+  include ModelMapper
+
+  map_model do
+    record_alias :widget
+
+    association :category do
+      allowing -> { Category.all }
+    end
+
+    # Reads the `category` reader auto-exposed by the association above.
+    attribute :name do
+      type :custom
+      allowing ->(_value, _source) { category&.name }
+    end
+  end
+
+end
+
+# A later association's `map_if` reads an earlier reference by name. The reader must exist even when
+# the reference is absent/invalid (returning nil), so the guard evaluates to false instead of raising
+# NameError. Mirrors JobMapper's `map_if -> { call_origin.present? }` guarding the nested builds.
+class GuardedBuildMapper
+
+  include ModelMapper
+
+  map_model do
+    record_alias :widget
+
+    association :category do
+      allowing -> { Category.all }
+      required true
+    end
+
+    association :parts_attributes, many: true do
+      from :parts
+      with AssocPartMapper
+      map_if -> { category.present? }
+    end
+  end
+
+end
+
 # Scalar whose source path differs from its destination attribute — used to check that the record's
 # OWN validation is keyed on the params path.
 class StatusPathMapper
@@ -283,6 +329,37 @@ class TestAssociation < Minitest::Test
     mapper   = ConditionalCategoryMapper.map_to_model(Widget.new, { category: { id: category.id }, link: true })
 
     assert_equal category.id, mapper.record.category.id
+  end
+
+  # --- association exposes an auto-reader -----------------------------------
+
+  # The resolved reference is readable by name on the mapper, with no manual attr_reader declared.
+  def test_reference_exposes_an_auto_reader
+    category = Category.create!(name: 'Tools', enabled: true)
+    mapper   = RefCategoryMapper.map_to_model(Widget.new, { category: { id: category.id } })
+
+    assert_predicate mapper, :valid?
+    assert_respond_to mapper, :category
+    assert_equal category.id, mapper.category.id
+  end
+
+  # A later attribute reads an earlier reference through its auto-exposed reader.
+  def test_later_attribute_reads_an_earlier_reference
+    category = Category.create!(name: 'Linked', enabled: true)
+    mapper   = DownstreamReaderMapper.map_to_model(Widget.new, { category: { id: category.id }, name: 'x' })
+
+    assert_predicate mapper, :valid?
+    assert_equal 'Linked', mapper.widget.name
+  end
+
+  # The reader exists even when the reference is absent, so a downstream guard reading it returns nil
+  # instead of raising NameError (the value is still reported invalid by the required rule).
+  def test_guard_reads_absent_reference_without_raising
+    mapper = GuardedBuildMapper.map_to_model(Widget.new, { parts: [{ name: 'a' }] })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category'
+    assert_empty mapper.widget.parts
   end
 
   # --- record validations keyed on the params path --------------------------

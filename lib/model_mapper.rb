@@ -90,6 +90,26 @@ module ModelMapper
       if (alias_name = @model_mapper_config.record_alias) && !method_defined?(alias_name)
         define_method(alias_name) { record }
       end
+
+      define_param_readers(@model_mapper_config)
+    end
+
+    # Expose a reader for every declared param so a mapped value can be read by name later in the same
+    # mapping (e.g. `association :call_origin` resolved, then read by a later attribute's `allowing`).
+    # Defined at declaration time — like a manual `attr_reader` — so the reader exists even when the
+    # value is absent or failed validation (returning nil), which is why downstream `map_if`/`allowing`
+    # lambdas can reference it safely. A `_id` reference also gets the de-suffixed object reader
+    # (`category_id` ⇒ also `category`). Never overrides a reader the class already defines.
+    def define_param_readers(config)
+      config.params.each_key do |name|
+        names = [name]
+        names << name.to_s.delete_suffix('_id') if name.to_s.end_with?('_id')
+        names.each do |reader|
+          next if method_defined?(reader) || private_method_defined?(reader)
+
+          define_method(reader) { instance_variable_get(:"@#{reader}") }
+        end
+      end
     end
 
     # Get the mapping configuration
@@ -225,10 +245,13 @@ module ModelMapper
         next
       end
 
-      # Store as instance variable for use in hooks
+      # Store as instance variable for use by later attributes/defaults/hooks in the same mapping and
+      # by the readers auto-defined in `map_model` (e.g. an `association :call_origin` resolved here is
+      # read by name in a later attribute's `allowing`/`default`). A resolved reference whose param
+      # ends in `_id` also stores the de-suffixed object (`@company_id` + `@company`).
       if defined?(ActiveRecord::Base) && value.is_a?(ActiveRecord::Base) && param_name.to_s.end_with?('_id')
         instance_variable_set(:"@#{param_name}", value.id)
-        instance_variable_set(:"@#{param_name.to_s.gsub(/_id$/, '')}", value)
+        instance_variable_set(:"@#{param_name.to_s.delete_suffix('_id')}", value)
       else
         instance_variable_set(:"@#{param_name}", value)
       end
