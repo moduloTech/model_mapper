@@ -45,9 +45,13 @@ class TestParamConfig < Minitest::Test
     assert @config.multiple_value
   end
 
-  def test_save_sets_save_value
-    @config.save false
-    refute @config.save_value
+  def test_assign_sets_assign_value
+    @config.assign false
+    refute @config.assign_value
+  end
+
+  def test_save_is_renamed_and_raises
+    assert_raises(ModelMapper::SaveOptionRenamedError) { @config.save false }
   end
 
   def test_default_sets_default_value
@@ -79,8 +83,8 @@ class TestParamConfig < Minitest::Test
     refute @config.multiple_value
   end
 
-  def test_default_save_is_true
-    assert @config.save_value
+  def test_default_assign_is_true
+    assert @config.assign_value
   end
 
   # #keys
@@ -113,12 +117,12 @@ class TestParamConfig < Minitest::Test
     refute @config.required?({ force: true }, Object.new)
   end
 
-  # #save?
+  # #assign?
 
-  def test_save_predicate
-    assert @config.save?
-    @config.save false
-    refute @config.save?
+  def test_assign_predicate
+    assert @config.assign?
+    @config.assign false
+    refute @config.assign?
   end
 
   # #multiple?

@@ -149,7 +149,7 @@ class NoSaveParamService
 
     attribute :name
     attribute :metadata do
-      save false
+      assign false
     end
   end
 
@@ -385,7 +385,7 @@ class MultipleReferentialService
       type :referential
       multiple true
       allowing Category.enabled
-      save false
+      assign false
     end
   end
 

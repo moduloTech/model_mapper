@@ -260,7 +260,7 @@ module ModelMapper
       next if value.nil? && allow_nil
 
       # Only include in the assignment hash when this param is assignable
-      next unless param_config.save?
+      next unless param_config.assign?
 
       # For referential types, extract the ID for assignment (scalar → id, array → array of ids).
       validated_params[param_name] =
