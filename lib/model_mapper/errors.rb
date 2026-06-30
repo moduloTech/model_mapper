@@ -13,6 +13,20 @@ module ModelMapper
 
   end
 
+  # Raised when a mapper still uses the renamed `save` DSL option. It only ever controlled whether the
+  # value is assigned to the target record, which now reads ambiguously against persistence
+  # (save_to_model). Use `assign` instead — same meaning, same polarity (`assign false` keeps a
+  # validation-only attribute out of the assignment hash).
+  class SaveOptionRenamedError < RuntimeError
+
+    def initialize(name = nil)
+      target = name ? " (attribute `#{name}`)" : ''
+      super("`save` was renamed to `assign`#{target}: it controls assignment to the record, not " \
+            'persistence. Use `assign` (e.g. `assign false`) instead.')
+    end
+
+  end
+
   class InvalidValueError < RuntimeError
 
     attr_reader :field, :details

@@ -6,7 +6,7 @@ module ModelMapper
   class ParamConfig
 
     attr_reader :name
-    attr_accessor :at_keys, :type_value, :field_value, :allowing_value, :required_value, :multiple_value, :save_value,
+    attr_accessor :at_keys, :type_value, :field_value, :allowing_value, :required_value, :multiple_value, :assign_value,
                   :default_value, :default_on_invalid_value, :condition_value, :mapper_value, :with_value, :of_value
 
     def initialize(name)
@@ -17,7 +17,7 @@ module ModelMapper
       @allowing_value = nil
       @required_value = false
       @multiple_value = false
-      @save_value = true
+      @assign_value = true
       @default_value = nil
       @default_on_invalid = false
       @condition_value = nil
@@ -75,8 +75,18 @@ module ModelMapper
       @multiple_value = value
     end
 
-    def save(value)
-      @save_value = value
+    # Whether the validated value is assigned to the target record (default true). `assign false` keeps
+    # a validation-only attribute (e.g. a presence rule whose record is built elsewhere) out of the
+    # assignment hash — the value is still validated, just not written. Named to contrast with
+    # persistence (`save_to_model`): the pipeline is map = assign → save = persist.
+    def assign(value)
+      @assign_value = value
+    end
+
+    # @deprecated Renamed to {#assign}. `save` read ambiguously against persistence (save_to_model),
+    #   so it now raises instead of silently working.
+    def save(_value)
+      raise ModelMapper::SaveOptionRenamedError, @name
     end
 
     def default(value)
@@ -126,7 +136,7 @@ module ModelMapper
       @allowing_value = other.allowing_value if other.allowing_value
       @required_value = other.required_value if other.explicitly_set?(:required_value)
       @multiple_value = other.multiple_value if other.explicitly_set?(:multiple_value)
-      @save_value = other.save_value if other.explicitly_set?(:save_value)
+      @assign_value = other.assign_value if other.explicitly_set?(:assign_value)
       @default_value = other.default_value if other.explicitly_set?(:default_value)
       @default_on_invalid_value = other.default_on_invalid_value if other.explicitly_set?(:default_on_invalid_value)
       @condition_value = other.condition_value if other.explicitly_set?(:condition_value)
@@ -146,7 +156,7 @@ module ModelMapper
       copy.allowing_value = @allowing_value
       copy.required_value = @required_value
       copy.multiple_value = @multiple_value
-      copy.save_value = @save_value
+      copy.assign_value = @assign_value
       copy.default_value = @default_value
       copy.default_on_invalid_value = @default_on_invalid_value
       copy.condition_value = @condition_value
@@ -184,9 +194,9 @@ module ModelMapper
       end
     end
 
-    # Check if this param should be saved to the target object
-    def save?
-      @save_value
+    # Whether this param's value is assigned to the target object (false ⇒ validation-only).
+    def assign?
+      @assign_value
     end
 
     # Check if this param expects multiple values
