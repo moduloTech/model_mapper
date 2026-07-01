@@ -427,10 +427,21 @@ module ModelMapper
   # Stage an existing (upsert-update) record onto the association in memory, WITHOUT persisting: the
   # collection case adds it to the loaded target, the singular case sets it as the association target.
   # The parent's save then cascades the update through accepts_nested_attributes_for's autosave.
+  #
+  # Singular exception: when the parent already holds a DIFFERENT persisted child, a bare
+  # `association.target = record` would leave that old child pointing at the parent — an orphan
+  # violating the 1-1 (two children for one has_one). In that (only) case we go through the standard
+  # `assoc=` writer, which disassociates the old child the way a has_one replace must. Rails can't defer
+  # that nullification (remove_target! saves the old child immediately when both are persisted), so it's
+  # the one spot that necessarily writes during mapping — inherent to replacing a persisted has_one, and
+  # scoped to the genuine replace case only. The common paths (no current child, or the same child being
+  # updated) stay fully deferred.
   def attach_existing_record(target, assoc, record, index)
     association = target.association(assoc.to_sym)
     if index
       association.add_to_target(record)
+    elsif (current = association.load_target) && current != record
+      target.public_send(:"#{assoc}=", record)
     else
       association.target = record
     end
