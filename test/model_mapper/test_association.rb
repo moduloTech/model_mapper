@@ -124,6 +124,22 @@ class UpsertPartsMapper
 
 end
 
+# Upsert on a 1-1 association: build/update via the sub-mapper, id validated against the scope.
+class UpsertManualMapper
+
+  include ModelMapper
+
+  map_model do
+    record_alias :widget
+    association :manual_attributes do
+      from :manual
+      with AssocManualMapper
+      allowing -> { Manual.all }
+    end
+  end
+
+end
+
 # `map_if` block method (replaces `condition`).
 class ConditionalCategoryMapper
 
@@ -312,6 +328,33 @@ class TestAssociation < Minitest::Test
 
     refute_predicate mapper, :valid?
     assert_includes mapper.errors.keys, 'parts.0.id'
+  end
+
+  # An in-scope id UPDATES that record in place (no duplicate) and attaches it to the parent — the
+  # headline upsert behavior. The parent's save cascades via accepts_nested_attributes_for.
+  def test_upsert_updates_in_scope_element_without_duplicating
+    part   = Part.create!(name: 'allowed')
+    widget = Widget.create!(name: 'w')
+    mapper = UpsertPartsMapper.map_to_model(widget, { parts: [{ id: part.id, name: 'renamed' }] })
+
+    assert_predicate mapper, :valid?
+    widget.save!
+    assert_equal [part.id], widget.parts.reload.pluck(:id) # the updated record only — no duplicate built
+    assert_equal 'renamed', part.reload.name
+    assert_equal widget.id, part.widget_id
+  end
+
+  # Same update path for a 1-1 association.
+  def test_upsert_updates_singular_in_scope_element
+    manual = Manual.create!(title: 'orig')
+    widget = Widget.create!(name: 'w')
+    mapper = UpsertManualMapper.map_to_model(widget, { manual: { id: manual.id, title: 'renamed' } })
+
+    assert_predicate mapper, :valid?
+    widget.save!
+    assert_equal manual.id, widget.manual.id # updated in place — not a new manual
+    assert_equal 'renamed', manual.reload.title
+    assert_equal widget.id, manual.widget_id
   end
 
   # --- map_if ---------------------------------------------------------------

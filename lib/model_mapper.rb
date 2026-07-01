@@ -94,17 +94,25 @@ module ModelMapper
       define_param_readers(@model_mapper_config)
     end
 
-    # Expose a reader for every declared param so a mapped value can be read by name later in the same
-    # mapping (e.g. `association :call_origin` resolved, then read by a later attribute's `allowing`).
-    # Defined at declaration time — like a manual `attr_reader` — so the reader exists even when the
-    # value is absent or failed validation (returning nil), which is why downstream `map_if`/`allowing`
-    # lambdas can reference it safely. A `_id` reference also gets the de-suffixed object reader
-    # (`category_id` ⇒ also `category`). Never overrides a reader the class already defines.
+    # Expose a reader for every param that is stored as a mapper ivar, so a mapped value can be read by
+    # name later in the same mapping (e.g. `association :call_origin` resolved, then read by a later
+    # attribute's `allowing`). Defined at declaration time — like a manual `attr_reader` — so the reader
+    # exists even when the value is absent or failed validation (returning nil), which is why downstream
+    # `map_if`/`allowing` lambdas can reference it safely. IMPORTANT: this makes such lambdas
+    # order-dependent — an earlier association is only readable by params declared AFTER it.
+    #
+    # Two kinds of param get NO reader, because they are never stored as an ivar: associations built via
+    # a sub-mapper (`with`, assigned straight onto the target). A reference whose param ends in `_id`
+    # additionally gets the de-suffixed object reader (`category_id` ⇒ also `category`), since that mode
+    # stores both. Never overrides a reader the class already defines.
     def define_param_readers(config)
-      config.params.each_key do |name|
-        names = [name]
-        names << name.to_s.delete_suffix('_id') if name.to_s.end_with?('_id')
-        names.each do |reader|
+      config.params.each_value do |param_config|
+        next if param_config.mapper?
+
+        readers = [param_config.name.to_s]
+        readers << param_config.name.to_s.delete_suffix('_id') if param_config.reference? &&
+                                                                   param_config.name.to_s.end_with?('_id')
+        readers.each do |reader|
           next if method_defined?(reader) || private_method_defined?(reader)
 
           define_method(reader) { instance_variable_get(:"@#{reader}") }
@@ -359,44 +367,73 @@ module ModelMapper
 
       if param_config.collection?
         sub_source.each_with_index do |item, index|
-          next if upsert_rejected?(param_config, source_params, item, validation_errors, index:)
+          existing = upsert_record(param_config, source_params, item, validation_errors, index:)
+          next if existing == :rejected
 
-          run_sub_mapper(target, assoc, item, param_config.mapper_value, context, validation_errors, index:)
+          run_sub_mapper(target, assoc, item, param_config.mapper_value, context, validation_errors,
+                         index:, existing:)
         end
       else
-        unless upsert_rejected?(param_config, source_params, sub_source, validation_errors)
-          run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors)
-        end
+        existing = upsert_record(param_config, source_params, sub_source, validation_errors)
+        next if existing == :rejected
+
+        run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors, existing:)
       end
     end
   end
 
-  # Upsert (`with` + `allowing`): an element that carries an identifier must reference a record in the
-  # `allowing` scope before it is built/updated through nested attributes. An out-of-scope id records a
-  # per-element error and skips that element; an element without an id is a create and passes through.
-  def upsert_rejected?(param_config, source_params, element, validation_errors, index: nil)
-    return false unless param_config.upsert?
+  # Decide the fate of an element under an upsert (`with` + `allowing`) by looking its identifier up in
+  # the `allowing` scope — the SAME reference-style `find_by` lookup used by 1-1/1-N references, so both
+  # modes accept the same `allowing` shapes:
+  #   - not an upsert, or no identifier → nil       (CREATE: a fresh nested record is built)
+  #   - identifier found in scope       → the record (UPDATE: it is attached + updated by the caller)
+  #   - identifier out of scope         → :rejected (a per-element error is recorded; element skipped)
+  def upsert_record(param_config, source_params, element, validation_errors, index: nil)
+    return nil unless param_config.upsert?
 
     identifier = param_config.field_value
     id         = reference_id(element, identifier)
-    return false if id.nil? || (id.respond_to?(:empty?) && id.empty?)
-    return false if allowed_values(param_config, source_params).exists?(identifier => id)
+    return nil if id.nil? || (id.respond_to?(:empty?) && id.empty?)
+
+    record = allowed_values(param_config, source_params).find_by(identifier => id)
+    return record if record
 
     field_path = reference_field_path(param_config, index, identifier)
     validation_errors[field_path] =
       ModelMapper::InvalidValueError.new(field_path, details: I18n.t('errors.invalid_value_details.invalid_referential'))
-    true
+    :rejected
   end
 
-  # Build one nested record on the target's association and map the sub-payload onto it via its
-  # sub-mapper, folding the sub-mapper's combined errors into the parent under the prefixed key.
-  def run_sub_mapper(target, assoc, sub_params, mapper_klass, context, validation_errors, index: nil)
-    sub_record = index ? target.public_send(assoc).build : target.public_send(:"build_#{assoc}")
+  # Map the sub-payload onto a nested record and fold the sub-mapper's combined errors into the parent
+  # under the prefixed key (e.g. "parts.0.name"). CREATE builds a fresh record; UPDATE (upsert, when
+  # `existing` is the in-scope record) attaches that record to the association in memory and maps onto
+  # it — persistence is deferred to the parent's own save, which cascades via accepts_nested_attributes_for.
+  def run_sub_mapper(target, assoc, sub_params, mapper_klass, context, validation_errors, index: nil, existing: nil)
+    sub_record = existing || build_sub_record(target, assoc, index)
+    attach_existing_record(target, assoc, existing, index) if existing
     prefix     = index ? "#{assoc}.#{index}." : "#{assoc}."
 
     sub_mapper = mapper_klass.new(sub_record, sub_params, **context)
     sub_mapper.map_to_model # non-raising: assigns the sub-record + collects its combined errors
     sub_mapper.errors.each { |field, error| validation_errors["#{prefix}#{field}"] = error }
+  end
+
+  # Build a fresh nested record on the target's association (collection: `assoc.build`; singular:
+  # `build_assoc`).
+  def build_sub_record(target, assoc, index)
+    index ? target.public_send(assoc).build : target.public_send(:"build_#{assoc}")
+  end
+
+  # Stage an existing (upsert-update) record onto the association in memory, WITHOUT persisting: the
+  # collection case adds it to the loaded target, the singular case sets it as the association target.
+  # The parent's save then cascades the update through accepts_nested_attributes_for's autosave.
+  def attach_existing_record(target, assoc, record, index)
+    association = target.association(assoc.to_sym)
+    if index
+      association.add_to_target(record)
+    else
+      association.target = record
+    end
   end
 
   # Wrap persistence with the before_save/after_save hooks.
