@@ -357,19 +357,28 @@ class TestAssociation < Minitest::Test
     assert_equal widget.id, manual.widget_id
   end
 
-  # A 1-1 upsert whose in-scope id points at a DIFFERENT record than the parent's current child must
-  # disassociate the old child (has_one replace), never leave it pointing at the parent (orphan).
-  def test_upsert_singular_replaces_current_child_without_orphaning_it
+  # `map_to_model` must not touch the DB: a 1-1 upsert update is staged in memory only and written
+  # solely by the parent's own save. Guards against re-introducing a write during mapping.
+  def test_upsert_singular_update_does_not_persist_during_map
+    manual = Manual.create!(title: 'orig')
+    widget = Widget.create!(name: 'w')
+    UpsertManualMapper.map_to_model(widget, { manual: { id: manual.id, title: 'renamed' } })
+
+    assert_equal 'orig', manual.reload.title # untouched until widget.save!
+  end
+
+  # A 1-1 upsert whose in-scope id points at a DIFFERENT record than the parent's current child is
+  # rejected (mapping can't disassociate a has_one without a write) — no orphan, keyed on the params path.
+  def test_upsert_singular_rejects_replacing_a_different_current_child
     old_manual = Manual.create!(title: 'old')
     widget     = Widget.create!(name: 'w', manual: old_manual)
     new_manual = Manual.create!(title: 'new')
-    mapper     = UpsertManualMapper.map_to_model(widget, { manual: { id: new_manual.id, title: 'attached' } })
+    mapper     = UpsertManualMapper.map_to_model(widget, { manual: { id: new_manual.id, title: 'x' } })
 
-    assert_predicate mapper, :valid?
-    widget.save!
-    assert_equal new_manual.id, widget.reload.manual.id # the new child replaced the old one
-    assert_equal 'attached', new_manual.reload.title
-    assert_nil old_manual.reload.widget_id             # old child disassociated, not orphaned
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'manual.id'
+    assert_equal widget.id, old_manual.reload.widget_id # current child untouched — no orphan, no write
+    assert_nil new_manual.reload.widget_id              # the differing record was not attached
   end
 
   # --- map_if ---------------------------------------------------------------

@@ -138,10 +138,12 @@ end
 > is no unscoped update path. The attach is in-memory; persistence is deferred to the parent's own save,
 > which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
 >
-> *1-1 exception:* if the parent already holds a **different** persisted child and the upsert attaches
-> another in-scope record, the old child is disassociated via the standard has_one replace — which Rails
-> cannot defer (the old child's nullification is written immediately). This is the only case that writes
-> during mapping, and only when genuinely replacing an existing 1-1 child.
+> *1-1 replace:* mapping never writes to the DB (associations are staged in memory before overall
+> validity is known), so a 1-1 upsert cannot disassociate a `has_one`'s current child (that needs an
+> immediate, un-rollback-able write). It therefore **rejects** an in-scope id that differs from the
+> parent's current child with a params-path error (e.g. `manual.id`) instead of silently orphaning the
+> old child on save. Updating the same child, or attaching when the parent has none, works as usual;
+> perform a genuine *replacement* in the caller. 1-N is unaffected.
 
 - **References assign the loaded object(s)**, not an id — the record fetched for validation is the
   one assigned (one fewer query, no re-load). A bare id (`{ call_origin: 5 }`) is accepted as well as
