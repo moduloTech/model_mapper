@@ -376,10 +376,28 @@ module ModelMapper
       else
         existing = upsert_record(param_config, source_params, sub_source, validation_errors)
         next if existing == :rejected
+        next if existing && singular_replace_rejected?(target, assoc, existing, param_config, validation_errors)
 
         run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors, existing:)
       end
     end
+  end
+
+  # A 1-1 upsert may update the parent's current child in place, but it must NOT reassign a DIFFERENT
+  # in-scope record: mapping is write-free (see attach_existing_record), so it cannot disassociate the
+  # old child (a has_one replace always writes), and silently attaching the new one would orphan the old
+  # child on the parent's later save. So we reject a differing in-scope id with a params-path error
+  # (e.g. "manual.id") and leave a genuine 1-1 replacement to the caller. Attaching to a parent with no
+  # current child, or updating the same child, is fine. `load_target` only reads (no write).
+  def singular_replace_rejected?(target, assoc, record, param_config, validation_errors)
+    current = target.association(assoc.to_sym).load_target
+    return false if current.nil? || current == record
+
+    field_path = reference_field_path(param_config, nil, param_config.field_value)
+    validation_errors[field_path] =
+      ModelMapper::InvalidValueError.new(field_path,
+                                         details: I18n.t('errors.invalid_value_details.cannot_replace_association'))
+    true
   end
 
   # Decide the fate of an element under an upsert (`with` + `allowing`) by looking its identifier up in
@@ -428,20 +446,17 @@ module ModelMapper
   # collection case adds it to the loaded target, the singular case sets it as the association target.
   # The parent's save then cascades the update through accepts_nested_attributes_for's autosave.
   #
-  # Singular exception: when the parent already holds a DIFFERENT persisted child, a bare
-  # `association.target = record` would leave that old child pointing at the parent — an orphan
-  # violating the 1-1 (two children for one has_one). In that (only) case we go through the standard
-  # `assoc=` writer, which disassociates the old child the way a has_one replace must. Rails can't defer
-  # that nullification (remove_target! saves the old child immediately when both are persisted), so it's
-  # the one spot that necessarily writes during mapping — inherent to replacing a persisted has_one, and
-  # scoped to the genuine replace case only. The common paths (no current child, or the same child being
-  # updated) stay fully deferred.
+  # Strictly in-memory on purpose: associations are mapped inside `run_mapping`, before overall validity
+  # is known, so writing here would mutate the DB on a map that later fails validation (and never
+  # persists) — breaking the "map doesn't persist" contract with no rollback. We therefore never use the
+  # `assoc=` writer (its has_one replace immediately nullifies a previous child — a write we must not do
+  # here). For 1-1 this only ever attaches to a parent with no current child, or updates the SAME child;
+  # a differing in-scope id is rejected upstream (see singular_replace_rejected?), so no old child is
+  # ever orphaned.
   def attach_existing_record(target, assoc, record, index)
     association = target.association(assoc.to_sym)
     if index
       association.add_to_target(record)
-    elsif (current = association.load_target) && current != record
-      target.public_send(:"#{assoc}=", record)
     else
       association.target = record
     end
