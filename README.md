@@ -137,6 +137,11 @@ end
 > and only for an id inside the scope. `with` alone always creates — it never updates by id — so there
 > is no unscoped update path. The attach is in-memory; persistence is deferred to the parent's own save,
 > which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
+>
+> *1-1 exception:* if the parent already holds a **different** persisted child and the upsert attaches
+> another in-scope record, the old child is disassociated via the standard has_one replace — which Rails
+> cannot defer (the old child's nullification is written immediately). This is the only case that writes
+> during mapping, and only when genuinely replacing an existing 1-1 child.
 
 - **References assign the loaded object(s)**, not an id — the record fetched for validation is the
   one assigned (one fewer query, no re-load). A bare id (`{ call_origin: 5 }`) is accepted as well as
