@@ -104,7 +104,7 @@ map_model do
     allowing -> { current_company.tags }
   end
 
-  # Upsert — build/update via the sub-mapper, every provided id validated against `allowing`.
+  # Upsert — an id ∈ `allowing` updates that record in place; no id builds a new one.
   association :missions_attributes, many: true do
     from :missions
     with MissionMapper, -> { { company: call_origin.company } }
@@ -124,14 +124,19 @@ end
 
 **Resolution, per value (or per element when `many: true`):**
 
-| id_field present? | `allowing` | `with` | behaviour |
+| `allowing` | `with` | id in payload | behaviour |
 |---|---|---|---|
-| value absent | — | — | skipped (or `required` → error) |
-| yes | yes | no  | id validated ∈ `allowing` → **link** (assign the object) |
-| yes | yes | yes | id validated ∈ `allowing` → **update** via nested attributes |
-| yes | no  | yes | **update** via nested attributes (no scope check) |
-| no  | —   | yes | **build** (create) via the sub-mapper |
-| no  | yes | no  | error — an id_field is required to link |
+| —   | —   | — | value absent → skipped (or `required` → error) |
+| yes | no  | yes | **link** — id validated ∈ `allowing`; the OBJECT is assigned |
+| yes | no  | no  | skipped (or `required` → error) — an id is required to link |
+| no  | yes | (ignored) | **build** (create) via the sub-mapper — any id in the payload is ignored |
+| yes | yes | yes | **update** — id validated ∈ `allowing`; that record is attached and updated **in place** |
+| yes | yes | no  | **build** (create) via the sub-mapper |
+
+> **Update is scoped only.** In-place update happens exclusively under upsert (`allowing` **and** `with`)
+> and only for an id inside the scope. `with` alone always creates — it never updates by id — so there
+> is no unscoped update path. The attach is in-memory; persistence is deferred to the parent's own save,
+> which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
 
 - **References assign the loaded object(s)**, not an id — the record fetched for validation is the
   one assigned (one fewer query, no re-load). A bare id (`{ call_origin: 5 }`) is accepted as well as
@@ -143,6 +148,10 @@ end
 - **Optional by default** — an absent section is fine; add `required true` to demand it. Out-of-scope
   or unknown ids are rejected (never silently dropped), keyed on the params path (`call_origin.id`,
   `missions.2.id`).
+- **Error reporting differs by mode for 1‑N** (worth knowing): a 1‑N **reference** fails fast — the
+  first out-of-scope element raises and any already-resolved elements are discarded, so only one
+  `name.N.id` is reported. A 1‑N **upsert** collects every out-of-scope id and reports them all. Both
+  still reject out-of-scope ids; they differ only in how many are surfaced at once.
 
 ### Arrays of scalars: `type :array` + `of`
 
@@ -196,7 +205,7 @@ end
 
 ## Attribute / association options
 
-`from`, `id_field`, `allowing`, `with`, `required`, `save`, `default`, `default_on_invalid`, `of`,
+`from`, `id_field`, `allowing`, `with`, `required`, `assign`, `default`, `default_on_invalid`, `of`,
 `type`, `multiple` are block methods; `many:` and the cardinality belong to `association`. `map_if`
 is a block method (see below).
 
@@ -209,7 +218,7 @@ is a block method (see below).
 | `many:` | Bool | `false` | `association` cardinality — `true` ⇒ 1‑N (kwarg on `association`) |
 | `map_if` | Proc | `nil` | Block method controlling whether the attribute/association is processed — replaces `condition` |
 | `required` | Bool / Proc | `false` | Whether `nil`/blank raises an error |
-| `save` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only |
+| `assign` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only (was `save`, which now raises) |
 | `default` | value / Proc | `nil` | Fallback when the source value is `nil`/missing |
 | `default_on_invalid` | Bool | `false` | Use `default` when validation fails instead of raising |
 | `type` | Symbol | `nil` | Scalar validation type (`:integer`, `:float`, `:date`, `:boolean`, `:enumerated`, `:custom`) or `:array` |
@@ -482,10 +491,11 @@ The `save_*` methods persist; the `map_*` methods never do. Persistence strategy
 
 ## Instance Variables
 
-After validation, each attribute value is stored as an instance variable on the service:
+After validation, each attribute value is stored as an instance variable **and** exposed through a
+reader of the same name, so it can be read by name later in the same mapping:
 
 ```ruby
-attribute :name    # -> @name = validated_value
+attribute :name    # -> @name = validated_value, and #name
 ```
 
 An `association` reference stores the resolved object under the association name:
@@ -494,13 +504,21 @@ An `association` reference stores the resolved object under the association name
 association :category do
   allowing -> { Category.enabled }
 end
-# -> @category = record   (and target.category = record)
+# -> @category = record, #category  (and target.category = record)
 ```
 
 (Legacy `:referential` attributes ending in `_id` store both `@category_id = record.id` and
-`@category = record`.)
+`@category = record`, with readers for each. A `with`-built association is assigned straight onto the
+target and gets **no** reader.)
 
-Attributes with `save: false` are still stored as instance variables — they are only excluded from `assign_attributes`.
+> **Readers are order-dependent.** They are defined at declaration time (so they exist — returning
+> `nil` — even when the value is absent or failed to map, which lets a `map_if`/`allowing` reference
+> them without raising). But a value is only *populated* once its attribute has been processed, and
+> attributes are processed in declaration order. So a downstream `allowing`/`map_if`/`with` lambda can
+> read an **earlier** association (`call_origin` declared first, read by a later `company`), but reading
+> a **later** one silently yields `nil`. Declare references before the attributes that consume them.
+
+Attributes with `assign false` are still stored as instance variables (and get a reader) — they are only excluded from `assign_attributes`.
 
 ## Inheritance
 

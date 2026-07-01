@@ -39,8 +39,9 @@ end
   (`call_origin=`, `vehicle_attributes=`); nothing is inferred from the name.
 - **Resolution**: `allowing` (reference, validates the id against the scope) and/or `with`
   (build/update via a sub-mapper + `accepts_nested_attributes_for`). Both together = upsert:
-  an element with an id is validated against `allowing` then updated; an element without an id
-  is created.
+  an element with an id ∈ `allowing` has that record **attached and updated in place** (no
+  duplicate), an element without an id is created, and an out-of-scope id is rejected. `with`
+  alone always creates — update is scoped-only, there is no unscoped update-by-id path.
 - **References assign the loaded object** instead of an id (one fewer query, no re-load).
 - **Cardinality is explicit** via `many: true` (no ActiveRecord reflection inference).
 - **All error keys use the params path** the value came from — reference/upsert (`call_origin.id`,
@@ -54,6 +55,19 @@ end
   `find_by` column in reference/upsert mode.
 - `map_if` block method for the processing condition (named `map_if` because `if` is a Ruby
   keyword and cannot be a bareword DSL method).
+- Every mapped attribute/reference is now exposed through a **reader** of the same name (defined at
+  declaration time), so a later `allowing`/`map_if`/`with` lambda can read an earlier one by name
+  without a manual `attr_reader`. Readers are order-dependent (an earlier reference is readable by
+  attributes declared after it; a later one yields `nil`). A `with`-built association gets no reader.
+
+### Changed / Breaking
+
+- **`save` option renamed to `assign`** (same meaning, same polarity: `assign false` keeps a
+  validation-only attribute out of `assign_attributes`). Unlike the soft deprecations below, the old
+  `save` **raises** `ModelMapper::SaveOptionRenamedError` rather than warning — because `save` now
+  reads as persistence (`save_to_model`) and silently keeping it would be misleading. Migration:
+  replace `save false` with `assign false`. (Distinct from `SaveOptionRemovedError`, which covers the
+  earlier removal of the `map_to_model(save:)` keyword.)
 
 ### Deprecated (still working, emit a warning)
 
