@@ -359,6 +359,26 @@ class TestAssociation < Minitest::Test
     assert_includes mapper.errors.keys, 'parts.0.id'
   end
 
+  # A list identifier would reach `find_by` as-is and silently match one of its elements, treating the
+  # element as an UPDATE of a record the payload never named.
+  def test_upsert_rejects_a_list_identifier
+    part   = Part.create!(name: 'allowed')
+    mapper = UpsertPartsMapper.map_to_model(Widget.new, { parts: [{ id: [part.id], name: 'x' }] })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'parts.0.id'
+  end
+
+  # A list element is read as a bare value by `reference_id`, and would otherwise attach the matched
+  # record and then run the sub-mapper with an Array as its params.
+  def test_upsert_rejects_a_list_element
+    part   = Part.create!(name: 'allowed')
+    mapper = UpsertPartsMapper.map_to_model(Widget.new, { parts: [[part.id]] })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'parts.0.id'
+  end
+
   # An in-scope id UPDATES that record in place (no duplicate) and attaches it to the parent — the
   # headline upsert behavior. The parent's save cascades via accepts_nested_attributes_for.
   def test_upsert_updates_in_scope_element_without_duplicating

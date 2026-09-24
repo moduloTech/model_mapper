@@ -413,10 +413,20 @@ module ModelMapper
     id         = reference_id(element, identifier)
     return nil if id.nil? || (id.respond_to?(:empty?) && id.empty?)
 
+    field_path = reference_field_path(param_config, index, identifier)
+
+    # Same refusal as the reference path: a list or a section reaches `find_by` as-is and silently
+    # matches one of its elements, turning the element into an UPDATE of a record it never named.
+    if id.respond_to?(:each)
+      validation_errors[field_path] =
+        ModelMapper::InvalidValueError.new(field_path,
+                                           details: I18n.t('errors.invalid_value_details.reference_id_not_scalar'))
+      return :rejected
+    end
+
     record = allowed_values(param_config, source_params).find_by(identifier => id)
     return record if record
 
-    field_path = reference_field_path(param_config, index, identifier)
     validation_errors[field_path] =
       ModelMapper::InvalidValueError.new(field_path, details: I18n.t('errors.invalid_value_details.invalid_referential'))
     :rejected
