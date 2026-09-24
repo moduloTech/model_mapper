@@ -252,6 +252,35 @@ class TestAssociation < Minitest::Test
     assert_equal category.id, mapper.widget.category.id
   end
 
+  # A list digs by position, so indexing it with the identifier would raise. It is read as a bare
+  # value instead, and refused like any other non-scalar identifier.
+  def test_reference_rejects_a_list_section
+    mapper = RefCategoryMapper.map_to_model(Widget.new, { category: [1] })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+    assert_nil mapper.widget.category
+  end
+
+  # A list id would reach `find_by` as-is and silently match one of its elements.
+  def test_reference_rejects_a_list_identifier_on_the_id_path
+    category = Category.create!(name: 'Listed', enabled: true)
+    mapper   = RefCategoryMapper.map_to_model(Widget.new, { category: { id: [category.id] } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+    assert_nil mapper.widget.category
+  end
+
+  # A section id reaches `find_by` as-is and raises a database error.
+  def test_reference_rejects_a_section_identifier_on_the_id_path
+    mapper = RefCategoryMapper.map_to_model(Widget.new, { category: { id: { value: 1 } } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+    assert_nil mapper.widget.category
+  end
+
   def test_reference_custom_id_field
     category = Category.create!(name: 'ByName', enabled: true)
     mapper   = RefCategoryByNameMapper.map_to_model(Widget.new, { category: { name: 'ByName' } })

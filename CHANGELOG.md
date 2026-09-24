@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+An `association` in reference mode read its identifier with `element[identifier]` and handed the
+result straight to `find_by`. A list section (`{ category: [1] }`) raised `TypeError` — a list digs
+by position — and a list or section identifier (`{ category: { id: [1] } }`,
+`{ category: { id: { value: 1 } } }`) reached `find_by` as-is, silently matching one element or
+raising a database error. All three are now refused on the id path as an `InvalidValueError`.
+
 ## 0.4.1
 
 ### Added — unified `association`

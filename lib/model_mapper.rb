@@ -749,6 +749,12 @@ module ModelMapper
 
     raise ModelMapper::InvalidNilValueError.new(field_path) if id.nil? || (id.respond_to?(:empty?) && id.empty?)
 
+    # A list or a section reaches `find_by` as-is: a silent match on one element, or a database error.
+    if id.respond_to?(:each)
+      raise ModelMapper::InvalidValueError.new(field_path,
+                                               details: I18n.t('errors.invalid_value_details.reference_id_not_scalar'))
+    end
+
     record = allowed_values(param_config, source_params).find_by(identifier => id)
     return record if record
 
@@ -756,10 +762,11 @@ module ModelMapper
   end
 
   # The id of a reference element: the `identifier` key of a section (a Hash or an
-  # ActionController::Parameters — anything that digs), indifferent to symbol/string keys; or the
-  # value itself when the payload passes a bare id.
+  # ActionController::Parameters — anything that digs BY KEY), indifferent to symbol/string keys; or
+  # the value itself when the payload passes a bare id. A list digs by position, so indexing it with
+  # the identifier would raise: it is read as a value and refused above instead.
   def reference_id(element, identifier)
-    return element unless element.respond_to?(:dig)
+    return element unless element.respond_to?(:dig) && !element.is_a?(Array)
 
     element[identifier] || element[identifier.to_s]
   end
