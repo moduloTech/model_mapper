@@ -164,14 +164,13 @@ end
   (`:through` included) or `has_and_belongs_to_many`, ActiveRecord applies that change to the database
   **immediately**, during the map: new children get their foreign key (or join row), old ones are
   nullified, or **deleted** under `dependent: :destroy`/`:delete_all`/`:delete` (join rows are deleted)
-  — and it stays so even if the mapping then fails validation.
-  `immediate_write` decides what happens then:
+  — and it stays so even if the mapping then fails validation. Such an assignment is therefore
+  **refused** unless the reference declares `immediate_write true`:
 
   | | the assignment writes now | it writes nothing |
   |---|---|---|
-  | undeclared | assigned (written) + a one-time deprecation warning | assigned |
+  | undeclared, or `immediate_write false` | **refused**: `InvalidValueError` on the param's path (`parts`, `widget.parts`), nothing assigned, nothing written | assigned |
   | `immediate_write true` | assigned (written) | assigned |
-  | `immediate_write false` | **refused**: `InvalidValueError` on the param's path (`parts`, `widget.parts`), nothing assigned, nothing written | assigned |
 
   The assignment writes nothing on a new (unsaved) record, for a `belongs_to`, and when the value equals
   the current one, compared as ActiveRecord does (same child; same records, in any order — an unsaved
@@ -182,17 +181,16 @@ end
 
   The same holds for an `attribute` assigned through a collection's **ids writer** — `part_ids` for a
   `has_many :parts`, whatever its `type` (`of :integer`, untyped, or the deprecated `of :referential`):
-  ActiveRecord's `part_ids=` replaces the collection at once just like `parts=`. Declare
-  `immediate_write` on it the same way. The ids that reach the writer are compared as ActiveRecord's
-  ids writer reads them (blanks dropped, cast to the key type, column by column for a composite key;
-  an `of :integer` attribute already refuses a blank element itself), and an `*_ids` attribute that is
-  not a collection's ids writer on the record (a plain accessor) is left alone.
+  ActiveRecord's `part_ids=` replaces the collection at once just like `parts=`, so it is refused the
+  same way unless it declares `immediate_write true`. The ids that reach the writer are compared as
+  ActiveRecord's ids writer reads them (blanks dropped, cast to the key type, column by column for a
+  composite key; an `of :integer` attribute already refuses a blank element itself), and an `*_ids`
+  attribute that is not a collection's ids writer on the record (a plain accessor) is left alone.
 
   The check runs when the value is validated. A `before_assignation` hook that replaces a guarded
   value in the params it receives is not checked again: the replacement is assigned as the hook
-  wrote it. A future release refuses by default; see
-  [Deprecations](#a-reference-written-during-the-map). Replace such children in the caller, after the
-  map succeeded, when the write must wait for validation.
+  wrote it. Replace such children in the caller, after the map succeeded, when the write must wait
+  for validation; declare `immediate_write true` where writing during the map is acceptable.
 - **Error reporting differs by mode for 1‑N** (worth knowing): a 1‑N **reference** fails fast — the
   first out-of-scope element raises and any already-resolved elements are discarded, so only one
   `name.N.id` is reported. A 1‑N **upsert** collects every out-of-scope id and reports them all. Both
@@ -265,7 +263,7 @@ is a block method (see below).
 | `map_if` | Proc | `nil` | Block method controlling whether the attribute/association is processed — replaces `condition` |
 | `required` | Bool / Proc | `false` | Whether `nil`/blank raises an error |
 | `nullable` | Bool | undeclared | What an explicit `null` does: `true` clears, `false` refuses — see below |
-| `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`) — see below |
+| `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`, or undeclared) — see below |
 | `assign` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only (was `save`, which now raises) |
 | `default` | value / Proc | `nil` | Fallback when the source value is `nil`/missing |
 | `default_on_invalid` | Bool | `false` | Use `default` when validation fails instead of raising |
@@ -319,8 +317,8 @@ end
 - ⚠️ On a **persisted** record, clearing a `has_one`/`has_many` reference goes through the association
   writer, which ActiveRecord applies to the database **immediately, even if the mapping then fails
   validation**: the previous children are nullified, or **deleted** under `dependent: :destroy`.
-  `immediate_write` governs it like any other value of such a reference: `immediate_write false`
-  refuses the clear, `immediate_write true` accepts it (see
+  `immediate_write` governs it like any other value of such a reference: the clear is refused unless
+  the reference declares `immediate_write true` (see
   [Associations](#associations-association)).
 
 ### `default`
@@ -718,24 +716,6 @@ param (`assign false`) does not warn: it assigns nothing either way.
 
 Declare `nullable true` where the client means "clear it", `nullable false` where the record cannot
 hold a null. A client that sends `null` to mean "leave it alone" should stop sending the key.
-
-### A reference written during the map
-
-A reference `association`, or an `attribute` assigned through a collection's ids writer (`part_ids`),
-that does not declare `immediate_write` is still assigned when ActiveRecord writes that assignment to
-the database at once (a `has_one`/`has_many`/HABTM of a persisted record,
-with a value that differs from the current one), but a future release will **refuse** it instead. Each
-such assignment emits, once per mapper class and param:
-
-```
-[ModelMapper] WidgetMapper: `parts` changed an association of a persisted record, which ActiveRecord
-writes to the database immediately, during the map: it stays written even if the mapping then fails,
-and old children are deleted under a deleting `dependent`. A future release will refuse it instead.
-Declare `immediate_write false` to refuse it now, or `immediate_write true` to keep writing.
-```
-
-Declare `immediate_write true` where writing during the map is acceptable, `immediate_write false`
-where it is not.
 
 ## Tests
 
