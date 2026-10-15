@@ -214,18 +214,6 @@ class TestImmediateWrite < Minitest::Test
     assert_equal widget.id, part.reload.widget_id
   end
 
-  # The write warning is gone; the explicit-null one still fires, and both resets still forget it.
-  def test_explicit_null_warning_survives_the_write_warning
-    klass = parts_mapper
-    widget = Widget.create!
-
-    assert_output(nil, /explicit null/) { klass.map_to_model(widget, { parts: nil }) }
-    ModelMapper.reset_deprecation_warnings!
-    assert_output(nil, /explicit null/) { klass.map_to_model(widget, { parts: nil }) }
-    ModelMapper.reset_explicit_null_warnings!
-    assert_output(nil, /explicit null/) { klass.map_to_model(widget, { parts: nil }) }
-  end
-
   # --- no write: nothing refused, no warning ---
 
   def test_same_set_in_another_order_does_not_warn
@@ -969,7 +957,8 @@ class TestImmediateWrite < Minitest::Test
     assert_nil part.reload.widget_id
   end
 
-  def test_false_accepts_an_absent_key_and_an_ignored_null
+  # An absent key assigns nothing, so nothing is refused; a null clears, which writes, so it is.
+  def test_false_accepts_an_absent_key_and_refuses_a_null
     widget = Widget.create!
     part = Part.create!(name: 'p', widget:)
     manual = Manual.create!(title: 'm', widget:)
@@ -977,8 +966,8 @@ class TestImmediateWrite < Minitest::Test
     [parts_mapper(false), manual_mapper(false)].each do |klass|
       assert klass.map_to_model(widget, {}).valid?
     end
-    assert_output(nil, /explicit null/) { assert parts_mapper(false).map_to_model(widget, { parts: nil }).valid? }
-    assert_output(nil, /explicit null/) { assert manual_mapper(false).map_to_model(widget, { manual: nil }).valid? }
+    assert_equal ['parts'], parts_mapper(false).map_to_model(widget, { parts: nil }).errors.keys
+    assert_equal ['manual'], manual_mapper(false).map_to_model(widget, { manual: nil }).errors.keys
     assert_equal widget.id, part.reload.widget_id
     assert_equal widget.id, manual.reload.widget_id
   end
@@ -1135,20 +1124,13 @@ class TestImmediateWrite < Minitest::Test
     end
   end
 
-  # Without `nullable`, a clearing request (`null` or `[]`) is skipped like an absent key and assigns
-  # nothing; under `nullable true` it clears, which is a write.
+  # A clearing request (`null` or `[]`) clears, which is a write; `nullable false` refuses it earlier.
   def test_false_refuses_emptying_through_ids
     widget = Widget.create!
     part = Part.create!(name: 'a', widget:)
 
-    assert_output(nil, /empty list/) { assert ids_mapper(false).map_to_model(widget, { part_ids: [] }).valid? }
-    clearing = ids_mapper(false) do
-      type :array
-      of :integer
-      nullable true
-    end
-    assert_equal ['part_ids'], clearing.map_to_model(widget, { part_ids: nil }).errors.keys
-    assert_equal ['part_ids'], clearing.map_to_model(widget, { part_ids: [] }).errors.keys
+    assert_equal ['part_ids'], ids_mapper(false).map_to_model(widget, { part_ids: nil }).errors.keys
+    assert_equal ['part_ids'], ids_mapper(false).map_to_model(widget, { part_ids: [] }).errors.keys
     assert_equal widget.id, part.reload.widget_id
   end
 

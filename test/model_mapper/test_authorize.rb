@@ -502,12 +502,12 @@ class TestAuthorize < Minitest::Test
     assert_predicate mapper, :valid?
   end
 
-  # Without `nullable true`, an explicit null writes nothing: there is no write to refuse.
-  def test_explicit_null_that_writes_nothing_is_not_weighed
+  # Undeclared, an explicit null clears the field as `nullable true` does: the caller's write, weighed.
+  def test_undeclared_explicit_null_clears_and_is_weighed
     widget = Widget.new(name: 'Bolt')
     mapper = AuthzWidgetMapper.map_to_model(widget, { name: nil }, allowed: [])
 
-    assert_predicate mapper, :valid?
+    assert_equal ['name'], mapper.errors.keys
     assert_equal 'Bolt', widget.name
   end
 
@@ -520,13 +520,12 @@ class TestAuthorize < Minitest::Test
     assert_equal 'Bolt', widget.name
   end
 
-  # Without `nullable true`, an empty list writes nothing either: there is no write to refuse.
-  def test_empty_list_that_writes_nothing_is_not_weighed
+  # Undeclared, an empty list clears the field too: weighed like a null.
+  def test_undeclared_empty_list_clears_and_is_weighed
     widget = Widget.new(numbers: [1])
-    mapper = nil
-    capture_io { mapper = AuthzListMapper.map_to_model(widget, { numbers: [] }) }
+    mapper = AuthzListMapper.map_to_model(widget, { numbers: [] })
 
-    assert_predicate mapper, :valid?
+    assert_equal ['numbers'], mapper.errors.keys
     assert_equal [1], widget.numbers
   end
 
@@ -696,12 +695,13 @@ class TestAuthorize < Minitest::Test
     assert_nil widget.status
   end
 
-  # The rule lets nil through, but nil is not what lands: the default does.
-  def test_an_explicit_null_cannot_smuggle_a_refused_default
-    widget = Widget.new
+  # A null clears: the default the rule refuses never comes into play, and the clear the rule lets
+  # through lands.
+  def test_an_explicit_null_clears_instead_of_reaching_a_refused_default
+    widget = Widget.new(status: 'user')
     mapper = AuthzGuardedDefaultMapper.map_to_model(widget, { status: nil })
 
-    assert_equal ['status'], mapper.errors.keys
+    assert_predicate mapper, :valid?
     assert_nil widget.status
   end
 
@@ -730,13 +730,14 @@ class TestAuthorize < Minitest::Test
     assert_equal 'user', widget.status
   end
 
-  # An exempted default lands whichever way the payload leads to it — null as much as absence.
-  def test_an_exempted_default_is_applied_on_an_explicit_null
-    widget = Widget.new
+  # A null asks to clear, not for the default: the exemption covers the default only, so the clear is
+  # the caller's write, weighed and refused.
+  def test_an_explicit_null_is_weighed_not_replaced_by_an_exempted_default
+    widget = Widget.new(name: 'kept')
     mapper = AuthzExemptDefaultMapper.map_to_model(widget, { name: nil })
 
-    assert_predicate mapper, :valid?
-    assert_equal 'from-mapper', widget.name
+    assert_equal ['name'], mapper.errors.keys
+    assert_equal 'kept', widget.name
   end
 
   def test_an_exempted_default_is_applied_on_a_blank_value

@@ -62,45 +62,11 @@ module ModelMapper
     File.expand_path('..', __dir__)
   end
 
-  DEPRECATION_WARNINGS = Set.new
-  DEPRECATION_WARNINGS_LOCK = Mutex.new
-  private_constant :DEPRECATION_WARNINGS, :DEPRECATION_WARNINGS_LOCK
+  # Kept from 0.5.0, where they made the once-per-param deprecation warnings (explicit null, a reference
+  # written during the map) warn again. Both warnings are gone, so there is nothing left to forget.
+  def self.reset_deprecation_warnings!; end
 
-  # Deprecation: a clearing request — an explicit null, or an empty list on a multi-valued param — on a
-  # param that does not declare `nullable` is still treated like an absent key, but a future release
-  # clears the value instead. Warned once per (mapper class, param) whichever spelling comes first, since
-  # one declaration answers both.
-  def self.warn_explicit_null_once(mapper_class, param_name, keys, empty_list: false)
-    return unless first_deprecation?(:explicit_null, mapper_class, param_name)
-
-    received, it = empty_list ? ['an empty list', 'it'] : ['an explicit null', 'the null']
-    warn "[ModelMapper] #{mapper_label(mapper_class, param_name, keys)} received #{received}, which is " \
-         'treated like an absent key (skipped, or replaced by its `default`); a future release will clear the ' \
-         "value instead. Declare `nullable true` to clear it now, or `nullable false` to reject #{it}."
-  end
-
-  # Each deprecation is warned at most once per (kind, mapper class, param) per process — the same
-  # endpoint receives the same payload on every request. Keyed by the class's object_id rather than the
-  # class itself, so a warned anonymous mapper can still be garbage-collected (a reused id can at worst
-  # hide one warning), and two live anonymous mappers never share an entry.
-  def self.first_deprecation?(kind, mapper_class, param_name)
-    key = [kind, mapper_class.object_id, param_name]
-    DEPRECATION_WARNINGS_LOCK.synchronize { DEPRECATION_WARNINGS.add?(key) }
-  end
-
-  def self.mapper_label(mapper_class, param_name, keys)
-    path = keys.join('.')
-    sent_as = path == param_name.to_s ? '' : " (sent as `#{path}`)"
-    "#{mapper_class.name || mapper_class.inspect}: `#{param_name}`#{sent_as}"
-  end
-  private_class_method :first_deprecation?, :mapper_label
-
-  # Forget which deprecations were already emitted (tests).
-  def self.reset_deprecation_warnings!
-    DEPRECATION_WARNINGS_LOCK.synchronize { DEPRECATION_WARNINGS.clear }
-  end
-
-  # @deprecated Use {.reset_deprecation_warnings!}, which this now calls (it forgets every kind).
+  # @deprecated Use {.reset_deprecation_warnings!}, which this calls.
   def self.reset_explicit_null_warnings! = reset_deprecation_warnings!
 
   def self.included(base)
@@ -305,24 +271,17 @@ module ModelMapper
           next
         end
 
-        # A clearing request on an optional param: `nullable` decides. A required param keeps refusing
-        # it in validate_param, whatever `nullable` says. See `clearing_request?`.
+        # A clearing request on an optional param erases the value. `nullable false` refuses it
+        # instead, for a value the record cannot hold while the key itself stays optional. A required
+        # param keeps refusing it in validate_param, whatever `nullable` says. See `clearing_request?`.
         cleared = false
         default_holder = nil
         if allow_nil && clearing_request?(param_config, present, raw_value)
-          case param_config.nullable_value
-          when true
-            cleared = true
-            value = param_config.collection? ? [] : nil
-          when false
-            raise ModelMapper::InvalidNilValueError.new(param_config.keys.join('.'))
-          else
-            # A validation-only param assigns nothing, so clearing it changes nothing worth warning about.
-            if param_config.assign?
-              ModelMapper.warn_explicit_null_once(self.class, param_name, param_config.keys,
-                                                  empty_list: !raw_value.nil?)
-            end
-          end
+          raise ModelMapper::InvalidNilValueError.new(param_config.keys.join('.')) if
+            param_config.nullable_value == false
+
+          cleared = true
+          value = param_config.collection? ? [] : nil
         end
         unless cleared
           value, default_holder =
