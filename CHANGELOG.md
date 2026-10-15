@@ -137,6 +137,35 @@ declares `immediate_write true` to keep writing during the map, or leaves it und
 caller change the children after the map succeeded. `immediate_write false` now says the same as
 leaving it undeclared; it stays a distinct state so a child mapper can override its parent either way.
 
+### Changed — a clearing request now clears
+
+**Breaking.** A clearing request — an explicit `null`, or an empty list on a multi-valued param
+(`many: true`, `type :array`) — on a param that declares no `nullable` used to be treated like an
+absent key (skipped, or replaced by its `default`) while warning that a future release would clear the
+value. This is that release: `nullable` now defaults to `true`, the warning is gone, and
+`{ name: null }` erases the value where a payload without `name` still leaves it alone (RFC 7396).
+`nullable false` is unchanged and refuses the request. On a scalar param `[]` still says nothing and
+changes nothing.
+
+A `default` now answers an absent key only: erasing a value and falling back to a default are
+opposite intentions, so the clearing request wins, as it already did under `nullable true`.
+
+A clear is a value like any other, so what weighs a value weighs it:
+
+- `authorize` weighs it (it used to be skipped as writing nothing).
+- A framed `allowing` that does not name `nil` refuses it: `attribute(:status) { allowing %w[active
+  inactive] }` given `{ status: null }` answered nothing on 0.5.0 and now answers a 422 on `status`,
+  neither clearing nor ignoring it. Name `nil` in the list to accept the clear, or declare
+  `nullable false` to refuse it as a null.
+- Clearing a `has_one`/`has_many` reference of a persisted record is a write ActiveRecord makes at
+  once, so it is refused unless the reference declares `immediate_write true` (see the entry above).
+
+Upgrading: a param that already declares `nullable` sees no change — that is what the 0.5.0 warning
+asked for. Anywhere else, a param that relied on "a null means leave it alone" declares
+`nullable false`, and one with an `allowing` list checks how it should answer a null.
+`ModelMapper.reset_deprecation_warnings!` and `reset_explicit_null_warnings!` still exist, and do
+nothing: no warning is emitted once per param any more.
+
 ## 0.5.0
 
 ### Added — per-field authorization with `authorize`

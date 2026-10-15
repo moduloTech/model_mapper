@@ -20,8 +20,8 @@ class NullManualMapper
 end
 
 # A clearing request — an explicit null (key present, raw value nil), or an empty list on a
-# multi-valued param — on an undeclared param is still skipped but warned about; `nullable true`
-# clears the value now, `nullable false` refuses it.
+# multi-valued param — clears the value, as `nullable true` says, which is the default; `nullable
+# false` refuses it. An absent key leaves the value alone.
 class TestExplicitNull < Minitest::Test
 
   def setup
@@ -39,73 +39,41 @@ class TestExplicitNull < Minitest::Test
     end
   end
 
-  def warning_for(param) = /explicit null.*`#{param}`|`#{param}`.*explicit null/m
+  # --- undeclared: cleared, like `nullable true`, without a warning ---
 
-  # --- undeclared: skipped + warned once per mapper class and param ---
-
-  def test_undeclared_null_keeps_the_value_and_warns
+  def test_undeclared_null_clears_the_value_without_warning
     klass = mapper { attribute :name }
-    widget = Widget.create!(name: 'kept')
+    widget = Widget.create!(name: 'old')
 
-    assert_output(nil, warning_for(:name)) { klass.map_to_model!(widget, { name: nil }) }
+    assert_output(nil, '') { klass.map_to_model!(widget, { name: nil }) }
+    assert_nil widget.name
+  end
+
+  def test_undeclared_absent_key_keeps_the_value
+    klass = mapper do
+      attribute :name
+      attribute :status
+    end
+    widget = Widget.new(name: 'kept')
+
+    klass.map_to_model!(widget, { status: 'active' })
     assert_equal 'kept', widget.name
   end
 
-  def test_warning_names_an_anonymous_mapper_by_inspect
-    klass = mapper { attribute :name }
-
-    assert_output(nil, /#<Class:0x\h+>: `name`/) { klass.map_to_model(Widget.new, { name: nil }) }
-  end
-
-  def test_warning_is_emitted_once_per_mapper_and_param_across_instances
-    klass = mapper do
-      attribute :name
-      attribute :code
-    end
-
-    assert_output(nil, warning_for(:name)) { klass.map_to_model(Widget.new, { name: nil }) }
-    assert_output(nil, '') { klass.map_to_model(Widget.new, { name: nil }) }
-    assert_output(nil, warning_for(:code)) { klass.map_to_model(Widget.new, { code: nil }) }
-  end
-
-  def test_two_mapper_classes_with_the_same_param_each_warn
-    first = mapper { attribute :name }
-    second = mapper { attribute :name }
-
-    _, err = capture_io do
-      first.map_to_model(Widget.new, { name: nil })
-      second.map_to_model(Widget.new, { name: nil })
-    end
-    assert_equal 2, err.scan(/`name`/).size
-  end
-
-  def test_reset_clears_the_warned_set
-    klass = mapper { attribute :name }
-    capture_io { klass.map_to_model(Widget.new, { name: nil }) }
-    ModelMapper.reset_explicit_null_warnings!
-
-    assert_output(nil, warning_for(:name)) { klass.map_to_model(Widget.new, { name: nil }) }
-  end
-
-  def test_warning_says_the_null_is_treated_like_an_absent_key
-    klass = mapper { attribute :name }
-
-    assert_output(nil, /treated like an absent key/) { klass.map_to_model(Widget.new, { name: nil }) }
-  end
-
-  def test_warning_names_the_payload_path_of_a_nested_param
+  def test_undeclared_null_clears_a_nested_attribute
     klass = mapper do
       attribute :status do
         from :info, :status
       end
     end
+    widget = Widget.new(status: 'active')
 
-    assert_output(nil, /`status` \(sent as `info\.status`\)/) do
-      klass.map_to_model(Widget.new, { info: { status: nil } })
-    end
+    klass.map_to_model!(widget, { info: { status: nil } })
+    assert_nil widget.status
   end
 
-  def test_undeclared_null_with_default_applies_the_default_and_warns
+  # Erasing a value and falling back to a default are opposite intentions: the null wins.
+  def test_undeclared_null_does_not_apply_the_default
     klass = mapper do
       attribute :status do
         default 'dflt'
@@ -113,21 +81,58 @@ class TestExplicitNull < Minitest::Test
     end
     widget = Widget.new(status: 'active')
 
-    assert_output(nil, warning_for(:status)) { klass.map_to_model(widget, { status: nil }) }
-    assert_equal 'dflt', widget.status
+    klass.map_to_model!(widget, { status: nil })
+    assert_nil widget.status
   end
 
-  def test_undeclared_null_on_a_lambda_required_answering_false_warns
+  def test_undeclared_null_clears_when_a_lambda_required_answers_false
     klass = mapper do
       attribute :code
       attribute :name do
         required ->(params) { params[:code].nil? }
       end
     end
-    widget = Widget.new(name: 'kept')
+    widget = Widget.new(name: 'old')
 
-    assert_output(nil, warning_for(:name)) { klass.map_to_model(widget, { code: 'X', name: nil }) }
-    assert_equal 'kept', widget.name
+    klass.map_to_model!(widget, { code: 'X', name: nil })
+    assert_nil widget.name
+  end
+
+  # An `allowing` frames the clearing like any other value (see test_allowing.rb): a list that does not
+  # name nil refuses the null instead of clearing, and one that names it accepts the clear.
+  def test_undeclared_null_is_framed_by_allowing
+    refusing = mapper { attribute :status do allowing %w[active inactive] end }
+    accepting = mapper { attribute :status do allowing ['active', 'inactive', nil] end }
+
+    widget = Widget.new(status: 'active')
+    result = refusing.map_to_model(widget, { status: nil })
+    assert_equal ['status'], result.errors.keys
+    assert_kind_of ModelMapper::InvalidValueError, result.errors['status']
+    assert_equal 'active', widget.status
+
+    accepting.map_to_model!(widget, { status: nil })
+    assert_nil widget.status
+  end
+
+  # The flip makes a null on any reference a clear. On a persisted parent, clearing a has_one is a write
+  # ActiveRecord makes at once: refused (immediate_write undeclared), so a failing map detaches nothing.
+  def test_undeclared_null_on_a_one_reference_beside_an_invalid_param_detaches_nothing
+    klass = mapper do
+      association :manual do allowing -> { Manual.all } end
+      attribute :price do type :float end
+    end
+    widget = Widget.create!
+    manual = Manual.create!(title: 'm', widget:)
+
+    result = klass.map_to_model(widget, { manual: nil, price: 'abc' })
+    assert_equal %w[manual price], result.errors.keys.sort
+    assert_equal widget.id, manual.reload.widget_id
+  end
+
+  # 0.5.0 shipped them; nothing is left for them to forget, but they still answer.
+  def test_reset_methods_still_exist
+    assert_nil ModelMapper.reset_deprecation_warnings!
+    assert_nil ModelMapper.reset_explicit_null_warnings!
   end
 
   # --- not an explicit null: no warning, no change ---
@@ -176,10 +181,11 @@ class TestExplicitNull < Minitest::Test
     nullable = mapper { attribute :name, nullable: true }
     refusing = mapper { attribute :name, nullable: false }
 
-    widget = Widget.new(name: 'kept')
-    assert_output(nil, warning_for(:name)) { undeclared.map_to_model(widget, { 'name' => nil }) }
-    assert_equal 'kept', widget.name
+    widget = Widget.new(name: 'old')
+    assert_output(nil, '') { undeclared.map_to_model!(widget, { 'name' => nil }) }
+    assert_nil widget.name
 
+    widget = Widget.new(name: 'old')
     nullable.map_to_model!(widget, { 'name' => nil })
     assert_nil widget.name
 
@@ -244,7 +250,9 @@ class TestExplicitNull < Minitest::Test
     assert_output(nil, '') { klass.map_to_model(Widget.new, { name: nil }) }
   end
 
-  def test_sub_mapper_association_null_or_empty_list_is_skipped_without_warning
+  # A sub-mapper association stages its records in memory and has no value to clear: a null or an empty
+  # list leaves the children as they are.
+  def test_sub_mapper_association_null_or_empty_list_is_skipped
     klass = mapper do
       association :parts_attributes, many: true do
         from :parts
@@ -253,7 +261,14 @@ class TestExplicitNull < Minitest::Test
     end
 
     [{ parts: nil }, { parts: [] }].each do |payload|
-      assert_output(nil, '') { klass.map_to_model(Widget.new, payload) }
+      widget = Widget.create!
+      part = Part.create!(name: 'p', widget:)
+
+      result = nil
+      assert_output(nil, '') { result = klass.map_to_model(widget, payload) }
+      assert_predicate result, :valid?
+      assert_equal [part], widget.parts.to_a
+      assert_equal widget.id, part.reload.widget_id
     end
   end
 
@@ -429,23 +444,23 @@ class TestExplicitNull < Minitest::Test
     end
   end
 
-  def test_undeclared_empty_list_keeps_the_value_and_warns
+  def test_undeclared_empty_list_empties_the_value
     widget = Widget.new(numbers: [1, 2])
 
-    assert_output(nil, /`numbers` received an empty list, which is treated like an absent key/) do
-      numbers_mapper.map_to_model!(widget, { numbers: [] })
-    end
-    assert_equal [1, 2], widget.numbers
+    assert_output(nil, '') { numbers_mapper.map_to_model!(widget, { numbers: [] }) }
+    assert_equal [], widget.numbers
   end
 
-  def test_undeclared_empty_list_with_default_applies_the_default_and_warns
+  def test_undeclared_empty_list_does_not_apply_the_default
     widget = Widget.new(numbers: [1, 2])
 
-    assert_output(nil, /empty list/) { numbers_mapper { default [9] }.map_to_model!(widget, { numbers: [] }) }
-    assert_equal [9], widget.numbers
+    numbers_mapper { default [9] }.map_to_model!(widget, { numbers: [] })
+    assert_equal [], widget.numbers
   end
 
-  def test_undeclared_empty_list_on_a_many_reference_keeps_the_children_and_warns
+  # Emptying a persisted parent's has_many is a write ActiveRecord makes at once: refused unless the
+  # reference declares `immediate_write true` (see test_immediate_write.rb).
+  def test_undeclared_empty_list_on_a_many_reference_is_refused_and_keeps_the_children
     klass = mapper do
       association :parts, many: true do
         allowing -> { Part.all }
@@ -454,18 +469,8 @@ class TestExplicitNull < Minitest::Test
     widget = Widget.create!
     part = Part.create!(name: 'p', widget:)
 
-    assert_output(nil, /`parts` received an empty list/) do
-      assert_predicate klass.map_to_model(widget, { parts: [] }), :valid?
-    end
+    assert_equal ['parts'], klass.map_to_model(widget, { parts: [] }).errors.keys
     assert_equal widget.id, part.reload.widget_id
-  end
-
-  # One declaration answers both spellings, so the param warns once whichever comes first.
-  def test_a_null_and_an_empty_list_warn_once_per_param
-    klass = numbers_mapper
-
-    assert_output(nil, /explicit null/) { klass.map_to_model(Widget.new, { numbers: nil }) }
-    assert_output(nil, '') { klass.map_to_model(Widget.new, { numbers: [] }) }
   end
 
   def test_nullable_true_empties_an_array_of_scalars_on_an_empty_list

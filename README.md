@@ -194,9 +194,9 @@ end
   The assignment writes nothing on a new (unsaved) record, for a `belongs_to`, and when the value equals
   the current one, compared as ActiveRecord does (same child; same records, in any order — an unsaved
   child already in the association does not count; a repeated record is no change on a `has_many` but
-  adds a join row on a `:through` or HABTM, so it counts there). A key that is absent, or a null that is skipped,
-  assigns nothing and is never refused — unless a `default` fills it: a default is assigned like a sent
-  value, and is refused like one.
+  adds a join row on a `:through` or HABTM, so it counts there). A key that is absent assigns
+  nothing and is never refused — unless a `default` fills it: a default is assigned like a sent value,
+  and is refused like one. A clearing request is a value like any other, and is refused like one.
 
   The same holds for an `attribute` assigned through a collection's **ids writer** — `part_ids` for a
   `has_many :parts`, whatever its `type` (`of :integer`, untyped, or the deprecated `of :referential`):
@@ -297,7 +297,7 @@ to `association` (`nullable:` and `immediate_write:` are also accepted as keywor
 | `map_if` | Proc | `nil` | Block method controlling whether the attribute/association is processed — replaces `condition` |
 | `authorize` | Proc / Bool | `nil` | May the caller **write** this field? A falsy result refuses it with an `UnauthorizedFieldError` |
 | `required` | Bool / Proc | `false` | Whether `nil`/blank raises an error |
-| `nullable` | Bool | undeclared | What a clearing request (`null`, or `[]` on a multi-valued param) does: `true` clears, `false` refuses — see below |
+| `nullable` | Bool | `true` | What a clearing request (`null`, or `[]` on a multi-valued param) does: `true` clears, `false` refuses — see below |
 | `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`, and undeclared) — see below |
 | `assign` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only (was `save`, which now raises) |
 | `default` | value / Proc | `nil` | Fallback when the source value is `nil`/missing; `authorize: false` exempts it from `authorize` |
@@ -328,7 +328,7 @@ which is what separates it from a `type :custom` validator.
 
 **A declared `allowing` always runs.** Nothing silently ignores it: if its type does not read it, it
 frames. What keeps it from running is never the declaration, only the mapping — nothing lands (absent
-key without `default`, blank value, a null skipped for want of `nullable`), `map_if` skipped the
+key without `default`, blank value), `map_if` skipped the
 param, or something already refused the field (`required`, `nullable false`, `authorize` on a value
 the caller sent or cleared, the type's own format check).
 
@@ -396,17 +396,17 @@ end
   `"false"`). ⚠️ A `type :custom` validator receives it too, where it never did before: write it to
   answer for `false`. A param that declares no constraint still takes `false` as sent, left to the
   column's own cast.
-- A **clearing request** is a value the caller asked to write, so it is framed too: under
-  `nullable true` the rule is handed what is about to land — `nil`, or `[]` on a multi-valued param
-  (`multiple true`) — and `allowing [true, false]` refuses the null it does not list where
-  `allowing [true, false, nil]` accepts it. `nullable false` refuses the null before the rule, and an
-  undeclared `nullable` skips it — nothing lands, nothing is weighed. Write a rule that answers for
-  `nil` whenever the param is `nullable true`.
+- A **clearing request** is a value the caller asked to write, so it is framed too: the rule is
+  handed what is about to land — `nil`, or `[]` on a multi-valued param (`multiple true`) — and
+  `allowing [true, false]` refuses the null it does not list where `allowing [true, false, nil]`
+  accepts it. `nullable false` refuses the null before the rule. So a list that does not name `nil`
+  answers a `null` with an error rather than a clear: name `nil` in it, or declare `nullable false`,
+  whichever the client should be told.
 - On a `type :array` the rule weighs elements, so an emptied list (`[]`, a clearing) has none to
   weigh: what governs it there is `nullable`. A refused element carries the `message` under its own
   indexed path (`numbers.1`). Everything above holds element by element — the authorization is
   weighed first, and an element refusal is a refusal, not a fallback to the `default`.
-- A blank value that writes nothing (absent key, `""`, a skipped null) never reaches the frame — but
+- A blank value that writes nothing (absent key, `""`) never reaches the frame — but
   the `default` that replaces it does, plain `default` and `default_on_invalid` alike. What is
   weighed is what lands, wherever it comes from.
 - `default_on_invalid true` answers for a value the **type** could not read, not for one the rule
@@ -437,24 +437,25 @@ element (`JSON.stringify({ parts: [] })`).
 
 | `nullable` | Clearing request (`null`, or `[]` on a multi-valued param) |
 |---|---|
-| undeclared | treated like an absent key (skipped, or replaced by its `default`) — **deprecated**, emits a warning |
-| `true` | clears the value: `nil`, or `[]` for a collection (`many: true`, `type :array`); `default` and type validation do not apply, a framed [`allowing`](#allowing) weighs the cleared value |
+| `true` (the default) | clears the value: `nil`, or `[]` for a collection (`many: true`, `type :array`); `default` and type validation do not apply, a framed [`allowing`](#allowing) weighs the cleared value |
 | `false` | refused with an `InvalidNilValueError` on the param's path; the key itself stays optional |
 
 ```ruby
-attribute :nickname, nullable: true          # { nickname: null } clears it
+attribute :nickname                          # { nickname: null } clears it; no key leaves it alone
 attribute :vin_mandatory, nullable: false    # NOT NULL column: a null is an error, absence is fine
-attribute :tag_ids, nullable: true do        # { tag_ids: [] } and { tag_ids: null } both empty it
+attribute :tag_ids do                        # { tag_ids: [] } and { tag_ids: null } both empty it
   type :array
   of :integer
 end
-association :category do
+association :category do                     # { category: null } unlinks the category
   allowing -> { Category.enabled }
-  nullable true                              # { category: null } unlinks the category
 end
 ```
 
-- `nullable` takes `true` or `false` (`nil` leaves it undeclared); anything else raises `ConfigurationError`.
+- `nullable` takes `true` or `false` (`nil` leaves it undeclared, which reads as `true`); anything else
+  raises `ConfigurationError`. Undeclared and `true` differ only for a child mapper, which keeps a
+  parent's declaration unless it makes its own.
+- A `default` answers an absent key only: a clearing request erases the value instead.
 - `required` wins: a required param refuses a null or an empty list whatever `nullable` says.
 - `""` and `{}` are not clearing requests and keep being skipped, and `[]` is one only on a
   multi-valued param — on a scalar it names nothing to clear, and says nothing whatever `nullable`
@@ -534,14 +535,14 @@ Four rules:
 - **Weighed only when a value would land on the record, and handed THAT value.** Three writes count:
   - the payload carries a non-blank value — weighed on the raw value sent;
   - a clearing request — an explicit `null`, or `[]` on a multi-valued param — that clears the field
-    (`nullable true`) — weighed on the cleared value;
-  - a `default` lands — whether the key was left out, sent as `null` or blank, or sent invalid under
+    (unless `nullable false` refuses it) — weighed on the cleared value;
+  - a `default` lands — whether the key was left out or sent blank, or sent invalid under
     `default_on_invalid` — weighed on the default, because it may itself read the payload and a
     rule inert on the field it sits next to is worse than no rule at all. Use
     `default …, authorize: false` when the value is the mapper's own doing (see below).
 
   Anything that writes nothing is not weighed: a field left out of a partial update, a blank value
-  (`""`, `[]`) or a clearing request without `nullable true` and with no default behind it, a `default` that
+  (`""`, or `[]` on a scalar param), a `default` that
   resolves to nothing, an empty list sent to a `many: true` sub-mapper association. A form that
   posts every field — the untouched ones blank — does not block a caller on the fields it may not set.
 - **A sent value is weighed before validation.** A refused field is never validated: the rule reads
@@ -944,30 +945,6 @@ still works and warns at each declaration. Replace it with `id_field :col`.
 
 `type :array` with a scalar `of` (`:string`, `:integer`, `:float`, `:date`, `:boolean`,
 `:enumerated`, `:custom`, `:any`) is **not** deprecated.
-
-### A clearing request being ignored
-
-A key sent with an explicit `null`, or with an empty list on a multi-valued param, on a param that
-declares no `nullable` is still skipped, like an absent key, but a future release will **clear** the
-value instead. Each such param emits, once per mapper class and param, whichever spelling it
-receives first:
-
-```
-[ModelMapper] WidgetMapper: `nickname` received an explicit null, which is treated like an absent key
-(skipped, or replaced by its `default`); a future release will clear the value instead. Declare
-`nullable true` to clear it now, or `nullable false` to reject the null.
-```
-
-An empty list reads `received an empty list, …` and ends `… or \`nullable false\` to reject it.`
-
-A nested param names the payload path too: `` `status` (sent as `info.status`) ``. A validation-only
-param (`assign false`) does not warn: it assigns nothing either way.
-
-Declare `nullable true` where the client means "clear it", `nullable false` where the record cannot
-hold a null. A client that sends `null` or `[]` to mean "leave it alone" should stop sending the key.
-On a persisted record, clearing a `has_one`/`has_many` reference is a write ActiveRecord makes at
-once: it is refused unless the reference also declares `immediate_write true` (see
-[Associations](#associations-association)).
 
 ## Tests
 
