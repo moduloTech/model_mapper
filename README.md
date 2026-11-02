@@ -406,7 +406,8 @@ end
   `nil` whenever the param is `nullable true`.
 - On a `type :array` the rule weighs elements, so an emptied list (`[]`, a clearing) has none to
   weigh: what governs it there is `nullable`. A refused element carries the `message` under its own
-  indexed path (`numbers.1`).
+  indexed path (`numbers.1`). Everything above holds element by element — the authorization is
+  weighed first, and an element refusal is a refusal, not a fallback to the `default`.
 - A blank value that writes nothing (absent key, `""`, a skipped null) never reaches the frame — but
   the `default` that replaces it does, plain `default` and `default_on_invalid` alike. What is
   weighed is what lands, wherever it comes from.

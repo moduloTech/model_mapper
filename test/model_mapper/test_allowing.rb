@@ -467,6 +467,49 @@ class AllowingMethodMessageMapper
 
 end
 
+# The elements of a `type :array` answer to the same two rules as a scalar value: the authorization
+# settles the right to write the field first, and a refusal is a refusal, not a fallback.
+class AllowingArrayAuthorizedDefaultMapper
+
+  include ModelMapper
+
+  class << self
+
+    attr_accessor :rule_calls
+
+  end
+
+  map_model do
+    attribute :numbers do
+      type :array
+      of :integer
+      default [99]
+      authorize ->(_value) { false }
+      allowing lambda { |value|
+        self.class.rule_calls += 1
+        value < 10
+      }, message: 'internal policy: quota for plan X'
+    end
+  end
+
+end
+
+class AllowingArrayDefaultOnInvalidMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute :numbers do
+      type :array
+      of :integer
+      default [1]
+      default_on_invalid true
+      allowing ->(value) { value < 10 }
+    end
+  end
+
+end
+
 class TestAllowing < Minitest::Test
 
   def setup
@@ -474,6 +517,7 @@ class TestAllowing < Minitest::Test
     AllowingMessageMapper.message_calls = 0
     AllowingAuthorizedMapper.rule_calls = 0
     AllowingAuthorizedDefaultMapper.rule_calls = 0
+    AllowingArrayAuthorizedDefaultMapper.rule_calls = 0
   end
 
   # --- The frame itself --------------------------------------------------------------------------
@@ -782,6 +826,26 @@ class TestAllowing < Minitest::Test
     # A param that declares no constraint still takes `false` as sent, cast by the column.
     assert_predicate unweighed, :valid?
     assert_equal 0, unweighed.record.quantity
+  end
+
+  def test_an_unauthorized_array_default_is_refused_before_the_rule_weighs_it
+    mapper = AllowingArrayAuthorizedDefaultMapper.map_to_model(Widget.new, {})
+
+    assert_instance_of ModelMapper::UnauthorizedFieldError, mapper.errors['numbers']
+    assert_equal 0, AllowingArrayAuthorizedDefaultMapper.rule_calls
+    assert_nil mapper.record.numbers
+  end
+
+  def test_default_on_invalid_does_not_cover_an_element_refusal
+    refused = AllowingArrayDefaultOnInvalidMapper.map_to_model(Widget.new, { numbers: ['50'] })
+    # The same declaration, reached by the route `default_on_invalid` does answer for: the default
+    # lands, and is framed element by element like anything else.
+    accepted = AllowingArrayDefaultOnInvalidMapper.map_to_model(Widget.new, {})
+
+    assert_equal ['numbers.0'], refused.errors.keys
+    assert_nil refused.record.numbers
+    assert_predicate accepted, :valid?
+    assert_equal [1], accepted.record.numbers
   end
 
   # --- Rule shapes ---------------------------------------------------------------------------------
