@@ -354,12 +354,7 @@ module ModelMapper
         # it earlier). Weighed only once the authorization has passed, whichever of the three it is: a
         # field the caller may not write is never evaluated, and the rule's `message` — which may
         # spell out an internal policy — is never disclosed to them.
-        if (cleared || !value.nil?) && param_config.allowing_frames?
-          # A value no type validator read (an untyped param) reaches a user lambda here without ever
-          # having been checked, and malformed bytes must not (see reject_invalid_encoding!).
-          reject_invalid_encoding!(value, param_config.keys.join('.'))
-          frame_value!(value, param_config, source_params)
-        end
+        frame_values!(value, param_config, source_params) if cleared || !value.nil?
       rescue ModelMapper::InvalidValueError, ModelMapper::InvalidFormatError => e
         validation_errors[e.field] = e
         errored_fields << param_name.to_s
@@ -967,6 +962,27 @@ module ModelMapper
   # is WHY, which the gem cannot: `allowing …, message:` carries that reason into the error, resolved
   # here so a Proc is called on refusal only — and with the value, so one rule can give a different
   # reason per case.
+  # Weigh a declared frame on what is about to be written: the value itself, or — on a `type :array` —
+  # each of its elements, under its own indexed path. Called from the mapping loop rather than from
+  # the validators, so what holds for a scalar holds for an element: the rule runs once the
+  # authorization has passed, and its refusal is a refusal rather than something `default_on_invalid`
+  # turns into the default.
+  def frame_values!(value, param_config, source_params)
+    return unless param_config.allowing_frames? || param_config.allowing_frames_elements?
+
+    # A value no type validator read (an untyped param) reaches a user lambda here without ever having
+    # been checked, and malformed bytes must not (see reject_invalid_encoding!).
+    reject_invalid_encoding!(value, param_config.keys.join('.'))
+    return frame_value!(value, param_config, source_params) if param_config.allowing_frames?
+    return unless value.is_a?(Array)
+
+    value.each_with_index do |element, index|
+      frame_value!(element, param_config, source_params)
+    rescue ModelMapper::InvalidValueError => e
+      raise reindex_array_error(e, "#{param_config.keys.join('.')}.#{index}")
+    end
+  end
+
   def frame_value!(value, param_config, source_params)
     answer = resolve_rule(param_config.allowing_value, value, source_params)
     # An ActiveRecord scope answers a reference's question, not a frame's, and would refuse every
@@ -1072,7 +1088,7 @@ module ModelMapper
     end
 
     element_type = param_config.of_value
-    return value if element_type == :any && !param_config.allowing_frames_elements?
+    return value if element_type == :any
 
     validator = :"valid_#{element_type}_value?"
     value.each_with_index.map do |element, index|
@@ -1080,13 +1096,13 @@ module ModelMapper
     end
   end
 
-  # Validate one array element through the element validator — then, when the element type is framed,
-  # through the attribute's `allowing` — re-keying any error with the element index so the failing
-  # position surfaces (e.g. "tag_ids.2").
+  # Validate one array element through the element validator, re-keying any error with the element
+  # index so the failing position surfaces (e.g. "tag_ids.2"). The attribute's `allowing` is weighed
+  # later, on the cast array, by frame_values!.
   def validate_array_element(element, index, validator, param_config, source_params, target_object)
-    cast = respond_to?(validator, true) ? send(validator, element, param_config, source_params, target_object) : element
-    frame_value!(cast, param_config, source_params) if param_config.allowing_frames_elements?
-    cast
+    return element unless respond_to?(validator, true)
+
+    send(validator, element, param_config, source_params, target_object)
   rescue ModelMapper::InvalidValueError, ModelMapper::InvalidFormatError => e
     raise reindex_array_error(e, "#{param_config.keys.join('.')}.#{index}")
   end

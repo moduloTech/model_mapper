@@ -85,7 +85,8 @@ see `Changed` below.
 On a `type :array`, `allowing` keeps applying to the element type `of` names — a scope for
 `of :enumerated` / `of :referential`, as before, and now a frame for every other `of` (a scalar one,
 or `of :any`, which leaves the element as it is), element by element, with the refusal keyed on the
-element (`numbers.2`).
+element (`numbers.2`). An element frame answers to the same order as a scalar one: it is weighed once
+the authorization has passed, and its refusal is outside what `default_on_invalid` answers for.
 
 ### Changed
 
