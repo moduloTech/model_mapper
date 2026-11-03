@@ -572,8 +572,10 @@ module ModelMapper
   # Weigh a param's `authorize` rule against the writes the caller did not spell out as a value, once
   # validation has resolved what actually lands. A sent, non-blank value was weighed before validation;
   # what is left:
-  #   - an explicit null that clears (`nullable true`) → the caller's write, weighed on the cleared value ;
-  #   - the `default` lands — key absent, null, blank, or invalid under `default_on_invalid`:
+  #   - a clearing request that clears (unless `nullable false`) → the caller's write, weighed on the
+  #     cleared value ;
+  #   - the `default` lands — key absent, blank, invalid under `default_on_invalid`, or a null on a
+  #     required param:
   #       `default …, authorize: false` → the mapper's own value, nothing to weigh ;
   #       otherwise                     → weighed on the default ;
   #   - nothing lands                   → nothing to refuse.
