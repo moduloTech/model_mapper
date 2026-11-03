@@ -1198,13 +1198,14 @@ class TestAssociation < Minitest::Test
     assert_equal %w[parts.0.name parts.1.name], mapper.errors.keys.sort
   end
 
-  # Only an upsert looks an identifier up: a build mapper (no `allowing`) builds whatever the element says.
-  def test_build_ignores_an_identifier
-    mapper = BuildPartsMapper.map_to_model(Widget.new, { parts: [{ id: 999, name: 'a' }] })
+  # Only an upsert looks an identifier up: a build mapper (no `allowing`) refuses an element naming one,
+  # rather than ignoring it and creating a record the element did not name.
+  def test_build_refuses_an_identifier
+    mapper = BuildPartsMapper.map_to_model(Widget.new, { parts: [{ name: 'a' }, { id: 999, name: 'b' }] })
 
-    assert_predicate mapper, :valid?
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'parts.1.id'
     assert_equal %w[a], mapper.widget.parts.map(&:name)
-    assert_nil mapper.widget.parts.first.id
   end
 
   # An error the `allowing` proc raises itself propagates; it is not recorded as a refusal of the element.

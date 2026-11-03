@@ -134,7 +134,8 @@ end
 | —   | —   | — | value absent → skipped (or `required` → error) |
 | yes | no  | yes | **link** — id validated ∈ `allowing`; the OBJECT is assigned |
 | yes | no  | no  | skipped (or `required` → error) — an id is required to link |
-| no  | yes | (ignored) | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** — any id in the payload is ignored |
+| no  | yes | no  | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** |
+| no  | yes | yes | **refused** on the id path (e.g. `address.id`, `parts.0.id`) — except, on a 1‑1, the id of the record already attached, which is then updated |
 | yes | yes | yes | **update** — id validated ∈ `allowing`; that record is attached and updated **in place** |
 | yes | yes | no  | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** |
 
@@ -165,9 +166,11 @@ built earlier and still unsaved. A 1‑N element without an id is always a creat
 
 
 > **Update by id is scoped only.** Looking a record up by an id from the payload happens exclusively
-> under upsert (`allowing` **and** `with`) and only for an id inside the scope. `with` alone never reads
-> an id — it builds, or on a 1‑1 edits the record the parent already held before the map — so there is
-> no unscoped lookup. The attach is in-memory; persistence is deferred to the parent's own save,
+> under upsert (`allowing` **and** `with`) and only for an id inside the scope. `with` alone never looks
+> an id up — it builds, or on a 1‑1 edits the record the parent already held before the map — so there
+> is no unscoped lookup. An id it cannot honour is refused rather than ignored: only the id of the 1‑1
+> record already attached is accepted (a client may send back the shape it read); to select another
+> record by id, declare `allowing` — `-> { Model.all }` when any record will do. The attach is in-memory; persistence is deferred to the parent's own save,
 > which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
 >
 > The attached record is also **linked**: a `belongs_to` gets the parent's foreign key, a 1‑N element
