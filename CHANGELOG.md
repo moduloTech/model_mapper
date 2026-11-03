@@ -112,6 +112,24 @@ Running the validator on every `false` would be more correct still — a `false`
 a date, nor a float — but it changes the answer of mappers that never declared any constraint, so it
 is left as a possible later evolution rather than folded into this fix.
 
+### Changed — a write made during the map is refused unless `immediate_write true` says otherwise
+
+**Breaking.** A reference `association`, or an `attribute` assigned through a collection's ids writer
+(`part_ids`), whose assignment ActiveRecord writes to the database at once — a `has_one`, `has_many`
+or HABTM of a persisted record, given a value that differs from the current one — and that declares no
+`immediate_write` is now **refused** with an `InvalidValueError` on the param's path, as `immediate_write
+false` already was: nothing is assigned, nothing is written, so a map that then fails validation leaves
+the database as it found it. 0.5.0 still assigned it and warned that this release would refuse it; the
+warning is gone.
+
+Like any value about to be refused, it reads as `nil` to the params declared after it, as under
+`immediate_write false` in 0.5.0.
+
+Upgrading: a param 0.5.0 warned about (`` `parts` changed an association of a persisted record… ``)
+declares `immediate_write true` to keep writing during the map, or leaves it undeclared and has the
+caller change the children after the map succeeded. `immediate_write false` now says the same as
+leaving it undeclared; it stays a distinct state so a child mapper can override its parent either way.
+
 ## 0.5.0
 
 ### Added — per-field authorization with `authorize`

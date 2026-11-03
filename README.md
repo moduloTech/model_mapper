@@ -188,9 +188,8 @@ end
 
   | | the assignment writes now | it writes nothing |
   |---|---|---|
-  | undeclared | assigned (written) + a one-time deprecation warning | assigned |
+  | undeclared, or `immediate_write false` | **refused**: `InvalidValueError` on the param's path (`parts`, `widget.parts`), nothing assigned, nothing written | assigned |
   | `immediate_write true` | assigned (written) | assigned |
-  | `immediate_write false` | **refused**: `InvalidValueError` on the param's path (`parts`, `widget.parts`), nothing assigned, nothing written | assigned |
 
   The assignment writes nothing on a new (unsaved) record, for a `belongs_to`, and when the value equals
   the current one, compared as ActiveRecord does (same child; same records, in any order — an unsaved
@@ -212,13 +211,12 @@ end
   not. A key the hook adds for a param that is not declared, or declared `assign false`, is assigned
   as is. An id that names no record is not a write: the ids writer raises `RecordNotFound` before
   replacing anything, and that error is left to surface. `immediate_write` on a param declared
-  `assign false` raises `ConfigurationError`: it is never assigned, so never written. A future release
-  refuses by default; see
-  [Deprecations](#a-reference-written-during-the-map). Replace such children in the caller, after the
-  map succeeded, when the write must wait for validation.
+  `assign false` raises `ConfigurationError`: it is never assigned, so never written. Replace such
+  children in the caller, after the map succeeded, when the write must wait for validation, or declare
+  `immediate_write true` where writing during the map is acceptable.
 
-  Under `immediate_write false`, a value that would be refused if it reached the writer as sent reads
-  as `nil` to the params declared after it (their `map_if`, `authorize`, `allowing`, `required`,
+  Unless `immediate_write true` is declared, a value that would be refused if it reached the writer as
+  sent reads as `nil` to the params declared after it (their `map_if`, `authorize`, `allowing`, `required`,
   `default`), as a param that failed validation does — a rule that trips over that `nil` is reported
   as an error on its own param — so nothing they decide rests on it; `before_assignation` and
   everything after the loop read it as usual. Two consequences are accepted: the forecast is made
@@ -300,7 +298,7 @@ to `association` (`nullable:` and `immediate_write:` are also accepted as keywor
 | `authorize` | Proc / Bool | `nil` | May the caller **write** this field? A falsy result refuses it with an `UnauthorizedFieldError` |
 | `required` | Bool / Proc | `false` | Whether `nil`/blank raises an error |
 | `nullable` | Bool | undeclared | What a clearing request (`null`, or `[]` on a multi-valued param) does: `true` clears, `false` refuses — see below |
-| `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`) — see below |
+| `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`, and undeclared) — see below |
 | `assign` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only (was `save`, which now raises) |
 | `default` | value / Proc | `nil` | Fallback when the source value is `nil`/missing; `authorize: false` exempts it from `authorize` |
 | `default_on_invalid` | Bool | `false` | Use `default` when validation fails instead of raising |
@@ -472,8 +470,8 @@ end
 - ⚠️ On a **persisted** record, clearing a `has_one`/`has_many` reference goes through the association
   writer, which ActiveRecord applies to the database **immediately, even if the mapping then fails
   validation**: the previous children are nullified, or **deleted** under `dependent: :destroy`.
-  `immediate_write` governs it like any other value of such a reference: `immediate_write false`
-  refuses the clear, `immediate_write true` accepts it (see
+  `immediate_write` governs it like any other value of such a reference: the clear is refused unless
+  the reference declares `immediate_write true` (see
   [Associations](#associations-association)).
 
 ### `default`
@@ -967,24 +965,6 @@ param (`assign false`) does not warn: it assigns nothing either way.
 
 Declare `nullable true` where the client means "clear it", `nullable false` where the record cannot
 hold a null. A client that sends `null` or `[]` to mean "leave it alone" should stop sending the key.
-
-### A reference written during the map
-
-A reference `association`, or an `attribute` assigned through a collection's ids writer (`part_ids`),
-that does not declare `immediate_write` is still assigned when ActiveRecord writes that assignment to
-the database at once (a `has_one`/`has_many`/HABTM of a persisted record,
-with a value that differs from the current one), but a future release will **refuse** it instead. Each
-such assignment emits, once per mapper class and param:
-
-```
-[ModelMapper] WidgetMapper: `parts` changed an association of a persisted record, which ActiveRecord
-writes to the database immediately, during the map: it stays written even if the mapping then fails,
-and old children are deleted under a deleting `dependent`. A future release will refuse it instead.
-Declare `immediate_write false` to refuse it now, or `immediate_write true` to keep writing.
-```
-
-Declare `immediate_write true` where writing during the map is acceptable, `immediate_write false`
-where it is not.
 
 ## Tests
 
