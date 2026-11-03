@@ -292,6 +292,28 @@ class TestImmediateWrite < Minitest::Test
     assert_equal widget.id, b.reload.widget_id
   end
 
+  # The forecast reads the current records without loading them onto the association, so it works on a
+  # strict-loading parent too: an undeclared change is foreseen there and withheld from later params.
+  def test_forecast_withholds_on_a_strict_loading_parent
+    widget = Widget.create!
+    Part.create!(name: 'a', widget:)
+    new = Part.create!(name: 'b')
+    other = Manual.create!(title: 'm')
+    klass = mapper do
+      association :parts, many: true do allowing -> { Part.all } end
+      association :manual do
+        allowing -> { Manual.all }
+        immediate_write true
+        map_if -> { parts.present? }
+      end
+    end
+
+    strict = Widget.strict_loading.find(widget.id)
+    result = klass.map_to_model(strict, { parts: [{ id: new.id }], manual: { id: other.id } })
+    assert_equal ['parts'], result.errors.keys
+    assert_nil other.reload.widget_id
+  end
+
   # The check runs at assignment, after before_assignation: a child the hook attaches is part of the
   # current set, so a value that would detach it is a write, and is refused without detaching it.
   def test_child_attached_by_before_assignation_is_seen_by_the_check

@@ -965,6 +965,9 @@ param (`assign false`) does not warn: it assigns nothing either way.
 
 Declare `nullable true` where the client means "clear it", `nullable false` where the record cannot
 hold a null. A client that sends `null` or `[]` to mean "leave it alone" should stop sending the key.
+On a persisted record, clearing a `has_one`/`has_many` reference is a write ActiveRecord makes at
+once: it is refused unless the reference also declares `immediate_write true` (see
+[Associations](#associations-association)).
 
 ## Tests
 
