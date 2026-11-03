@@ -759,12 +759,17 @@ module ModelMapper
   # once, a write during the map). Returns nil — build as usual — when editing it would go wrong:
   #   - the parent does not autosave the association (no accepts_nested_attributes_for / autosave), so
   #     its save would drop the edit of a persisted record while the map reports success;
-  #   - the owner's foreign key changed before this point (a mapped `*_id` attribute, a hook): the
-  #     record it now points to was picked by id outside any `allowing` scope;
+  #   - the owner's foreign key is not yet saved (set by the caller, a mapped `*_id` attribute, a hook):
+  #     the record it now points to was picked by id outside any `allowing` scope;
   #   - the record is marked for destruction, so the parent's save would delete it.
   # Under an upsert the record must still sit in the `allowing` scope, as it must when its id is sent:
   # otherwise the refusal is recorded on the id path and :rejected is returned.
+  #
+  # A target that is not an ActiveRecord (a form object exposing `build_<assoc>`) has no association to
+  # read: nil, so the record is built as before.
   def attached_record(target, assoc, param_config, source_params, validation_errors)
+    return nil unless target.respond_to?(:association)
+
     association = target.association(assoc.to_sym)
     reflection  = association.reflection
     return nil unless reflection.options[:autosave]
@@ -800,11 +805,14 @@ module ModelMapper
 
   # Load a singular association's target, as a read only: a `strict_loading` owner would otherwise raise
   # on a belongs_to the map merely inspects (private API, hence `send`, as for collections in
-  # current_association_records; an ActiveRecord without it loads as usual).
+  # current_association_records). An ActiveRecord without it (7.0) loads as usual, and a strict owner
+  # it refuses answers nil: nothing attached is known, so a new record is built, as without this lookup.
   def load_singular_target(association)
-    return association.load_target unless association.respond_to?(:skip_strict_loading, true)
+    return association.send(:skip_strict_loading) { association.load_target } if association.respond_to?(:skip_strict_loading, true)
 
-    association.send(:skip_strict_loading) { association.load_target }
+    association.load_target
+  rescue ActiveRecord::StrictLoadingViolationError
+    nil
   end
 
   # Decide the fate of an element under an upsert (`with` + `allowing`) by looking its identifier up in
