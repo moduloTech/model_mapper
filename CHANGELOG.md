@@ -225,10 +225,16 @@ map, as it always did. Under an upsert, an attached record outside `allowing` �
 another class than the scope's, on a polymorphic `belongs_to` — is refused on the id path, as its id
 would be. A `strict_loading` parent is read without raising.
 
+A sub-mapper without `allowing` ignored an id in its section, so the payload edited or created a
+record other than the one it named. That id is now refused on its path (`address.id`, `parts.0.id`),
+except, on a 1‑1, the id of the record already attached — a client sending back the shape it read.
+
 **Behaviour change:** a mapper that relied on a 1‑1 payload always creating a fresh record now updates
 the attached one. A sub-mapper `default` then lands on a field the payload leaves out, and a
 `belongs_to` target shared by several parents changes for all of them. To replace the record, send
-the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller.
+the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller. A
+payload that sent an id under a `with`-only association is now refused: drop the id, or declare
+`allowing` to select records by it.
 
 ## 0.5.0
 

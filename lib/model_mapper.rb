@@ -661,6 +661,8 @@ module ModelMapper
 
       if param_config.collection?
         sub_source.each_with_index do |item, index|
+          next if identifier_not_accepted?(param_config, item, nil, validation_errors, index:)
+
           existing = upsert_record(param_config, source_params, item, validation_errors, index:)
           next if existing == :rejected
           next if existing && outside_association_scope?(target, assoc, existing, param_config, index, validation_errors)
@@ -677,6 +679,7 @@ module ModelMapper
         # Without an identifier, the payload edits the record already attached, if any.
         existing ||= attached_record(target, assoc, param_config, source_params, validation_errors)
         next if existing == :rejected
+        next if identifier_not_accepted?(param_config, sub_source, existing, validation_errors)
 
         run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors, existing:)
       end
@@ -703,6 +706,34 @@ module ModelMapper
       ModelMapper::InvalidValueError.new(field_path,
                                          details: I18n.t('errors.invalid_value_details.cannot_replace_association'))
     true
+  end
+
+  # A sub-mapper without `allowing` never selects a record by id: an id in its section would otherwise
+  # be ignored, and the payload would edit — or create — a record other than the one it names. So an
+  # identifier is refused on its params path (e.g. "address.id", "parts.0.id"), unless it names the
+  # very record the edit lands on (`attached`, a singular association's attached record): a client may
+  # send back the shape it read. A blank identifier names nothing and is not weighed.
+  def identifier_not_accepted?(param_config, element, attached, validation_errors, index: nil)
+    return false if param_config.upsert?
+
+    identifier = param_config.field_value
+    id         = reference_id(element, identifier)
+    return false if id.nil? || (id.respond_to?(:empty?) && id.empty?)
+    return false if attached && names_record?(attached, identifier, id)
+
+    field_path = reference_field_path(param_config, index, identifier)
+    validation_errors[field_path] =
+      ModelMapper::InvalidValueError.new(field_path, details: I18n.t('errors.invalid_value_details.identifier_not_accepted'))
+    true
+  end
+
+  # Whether `id` names this persisted record on its `identifier` column, taken as sent (exact_reference_id?)
+  # and cast by the column, as `find_by` would compare it.
+  def names_record?(record, identifier, id)
+    return false if id.respond_to?(:each) || !record.persisted?
+    return false unless exact_reference_id?(record.class, identifier, id)
+
+    record.class.type_for_attribute(identifier.to_s).cast(id) == record.public_send(identifier)
   end
 
   # The record a singular association (belongs_to / has_one) currently holds — persisted, or built

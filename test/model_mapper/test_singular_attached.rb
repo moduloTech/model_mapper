@@ -510,6 +510,95 @@ class TestSingularAttached < Minitest::Test
     assert_equal 'fresh', widget.reload.category.name
   end
 
+  # --- an identifier without `allowing` ---------------------------------------------------------------
+
+  # Without `allowing` nothing is selected by id: an id other than the attached record's is refused
+  # rather than ignored, and nothing is edited.
+  def test_belongs_to_without_allowing_refuses_another_identifier
+    category = Category.create!(name: 'orig')
+    other    = Category.create!(name: 'other')
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { id: other.id, name: 'renamed' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+    widget.save!
+    assert_equal %w[orig other], [category.reload.name, other.reload.name]
+  end
+
+  # A client sending back the shape it read names the attached record: accepted, as an integer or a
+  # string of digits.
+  def test_belongs_to_without_allowing_accepts_the_attached_identifier
+    [->(c) { c.id }, ->(c) { c.id.to_s }].each do |id_of|
+      category = Category.create!(name: 'orig')
+      widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+      mapper = AttachedBtMapper.map_to_model(widget, { category: { id: id_of.(category), name: 'renamed' } })
+
+      assert_predicate mapper, :valid?, mapper.errors.inspect
+      widget.save!
+      assert_equal 'renamed', category.reload.name
+    end
+  end
+
+  def test_has_one_without_allowing_refuses_an_identifier_when_none_is_attached
+    stray  = Manual.create!(title: 'stray')
+    widget = Widget.create!(name: 'w')
+
+    mapper = AttachedHasOneMapper.map_to_model(widget, { manual: { id: stray.id, title: 'x' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'manual.id'
+    assert_nil widget.manual
+  end
+
+  def test_has_one_without_allowing_accepts_the_attached_identifier
+    manual = Manual.create!(title: 'orig')
+    widget = Widget.create!(name: 'w', manual:)
+
+    mapper = AttachedHasOneMapper.map_to_model(widget, { manual: { id: manual.id, title: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', manual.reload.title
+  end
+
+  # An id taken as sent: "1abc" would cast to the attached record's id, it names nothing.
+  def test_without_allowing_an_inexact_identifier_is_refused
+    category = Category.create!(name: 'orig')
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { id: "#{category.id}abc", name: 'x' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+  end
+
+  # A blank identifier names nothing: the attached record is edited.
+  def test_without_allowing_a_blank_identifier_is_not_weighed
+    category = Category.create!(name: 'orig')
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { id: '', name: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', category.reload.name
+  end
+
+  def test_many_without_allowing_refuses_an_element_identifier
+    part   = Part.create!(name: 'kept')
+    widget = Widget.create!(name: 'w', parts: [part])
+
+    mapper = AttachedPartsMapper.map_to_model(widget, { parts: [{ id: part.id, name: 'renamed' }] })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'parts.0.id'
+    assert_no_new_row(Part) { widget.save! }
+    assert_equal 'kept', part.reload.name
+  end
+
   # --- many: true -------------------------------------------------------------------------------------
 
   # A collection element without an identifier stays a creation, whatever the parent already holds.
