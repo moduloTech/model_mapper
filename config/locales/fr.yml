@@ -11,7 +11,7 @@ fr:
       reference_id_not_scalar: "l'identifiant doit être une valeur unique."
       cannot_replace_association: "l'enregistrement déjà associé ne peut pas être remplacé ici ; mettez-le à jour par son propre id ou remplacez-le côté appelant."
       outside_association_scope: "l'enregistrement est hors du périmètre de l'association, il ne peut pas lui être rattaché."
-      identifier_not_accepted: "cette association ne sélectionne pas d'enregistrement par identifiant ; seul l'enregistrement déjà rattaché peut être désigné."
+      identifier_not_accepted: "cette association ne sélectionne pas d'enregistrement par identifiant ; seul l'enregistrement déjà rattaché, quand ce payload peut le modifier, peut être désigné."
       reference_write_refused: "les enregistrements associés ne peuvent pas être modifiés ici, car cela écrirait en base avant la validation de la requête ; modifiez-les côté appelant."
     invalid_nil_value_error: "Le champ %{field} ne peut pas être nul ou blanc."
     unauthorized_field_error: "Le champ %{field} ne peut pas être renseigné par cet appelant."

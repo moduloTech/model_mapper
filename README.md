@@ -135,7 +135,7 @@ end
 | yes | no  | yes | **link** — id validated ∈ `allowing`; the OBJECT is assigned |
 | yes | no  | no  | skipped (or `required` → error) — an id is required to link |
 | no  | yes | no  | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** |
-| no  | yes | yes | **refused** on the id path (e.g. `address.id`, `parts.0.id`) — except, on a 1‑1, the id of the record already attached, which is then updated |
+| no  | yes | yes | **refused** on the id path (e.g. `address.id`, `parts.0.id`) — except, on a 1‑1, the id of the record already attached when the payload edits it (see below), which is then updated; an `id` the sub-mapper reads itself is data, not weighed |
 | yes | yes | yes | **update** — id validated ∈ `allowing`; that record is attached and updated **in place** |
 | yes | yes | no  | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** |
 
@@ -152,6 +152,9 @@ built earlier and still unsaved. A 1‑N element without an id is always a creat
 > - a `belongs_to` whose foreign key changed earlier in the map (a mapped `*_id`, a hook) is not
 >   followed: that record was picked by id outside any scope;
 > - a record marked for destruction is left to its destruction.
+>
+> In those cases the attached record's own id is refused like any other under `with` alone: the
+> payload would not edit the record it names.
 >
 > On a `has_one`, that build still replaces the current child at once (its foreign key is nullified
 > during the map), as any `has_one` build does.
