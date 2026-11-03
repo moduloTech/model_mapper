@@ -71,10 +71,10 @@ allowing ->(value) { value || support? },
 
 What the rule weighs is what is about to be written: the cast payload value, the value as sent when
 no `type` casts it, the `default` that replaced an invalid one — and the **clearing** a caller asked
-for. Under `nullable true` the rule is handed the `nil` that is about to land, so
-`allowing [true, false]` refuses the null it does not list where `allowing [true, false, nil]`
-accepts it, and a rule on a nullable param must answer for `nil`. `nullable false` refuses the null
-before the rule and an undeclared `nullable` skips it, so nothing is weighed in either case.
+for. A clearing request is handed to the rule as the `nil` that is about to land (an undeclared
+`nullable` clears too, see the entry below), so `allowing [true, false]` refuses the null it does not
+list where `allowing [true, false, nil]` accepts it, and a rule must answer for `nil`. `nullable
+false` refuses the null before the rule, so nothing is weighed then.
 `default_on_invalid true` keeps answering for a value the TYPE could not read, not for one the rule
 refused: a frame refusal stays a refusal, and the default that lands is itself framed.
 
@@ -144,25 +144,36 @@ leaving it undeclared; it stays a distinct state so a child mapper can override 
 absent key (skipped, or replaced by its `default`) while warning that a future release would clear the
 value. This is that release: `nullable` now defaults to `true`, the warning is gone, and
 `{ name: null }` erases the value where a payload without `name` still leaves it alone (RFC 7396).
-`nullable false` is unchanged and refuses the request. On a scalar param `[]` still says nothing and
-changes nothing.
+`nullable false` is unchanged and refuses the request. On a scalar param `[]` is still not a
+clearing request: it is a blank value, as before.
 
-A `default` now answers an absent key only: erasing a value and falling back to a default are
-opposite intentions, so the clearing request wins, as it already did under `nullable true`.
+A clearing request no longer falls back to the `default`: erasing a value and falling back to a
+default are opposite intentions, so the clear wins, as it already did under `nullable true`. The
+`default` still answers an absent key, a blank value (`""`, `[]` on a scalar), an invalid one under
+`default_on_invalid`, and a null on a `required` param.
 
 A clear is a value like any other, so what weighs a value weighs it:
 
-- `authorize` weighs it (it used to be skipped as writing nothing).
+- `authorize` weighs it, where it used to weigh the `default` that replaced the null, or nothing.
+- Every rule that reads the value — an `allowing` or `authorize` lambda, a `type :custom` validator,
+  `before_assignation` — is handed `nil` (or `[]`) on an optional param that receives a null. One
+  that does not answer for it raises out of the non-raising `map_to_model`: `allowing ->(v) {
+  v.positive? }` given `{ quantity: null }` now raises `NoMethodError` where 0.5.0 skipped the key.
 - A framed `allowing` that does not name `nil` refuses it: `attribute(:status) { allowing %w[active
   inactive] }` given `{ status: null }` answered nothing on 0.5.0 and now answers a 422 on `status`,
   neither clearing nor ignoring it. Name `nil` in the list to accept the clear, or declare
-  `nullable false` to refuse it as a null.
+  `nullable false` to refuse it as a null. A `type :enumerated` list is read by its validator, not a
+  frame, and a clear does not reach the validator: an enumerated param clears on a null whatever
+  its list says, as it already did under `nullable true`.
 - Clearing a `has_one`/`has_many` reference of a persisted record is a write ActiveRecord makes at
   once, so it is refused unless the reference declares `immediate_write true` (see the entry above).
 
-Upgrading: a param that already declares `nullable` sees no change — that is what the 0.5.0 warning
-asked for. Anywhere else, a param that relied on "a null means leave it alone" declares
-`nullable false`, and one with an `allowing` list checks how it should answer a null.
+Upgrading: a param that already declares `nullable` sees no change. Anywhere else, a param that
+relied on "a null means leave it alone" declares `nullable false`, one with an `allowing` list
+checks how it should answer a null, and every rule lambda and `before_assignation` hook must answer
+for `nil`. The 0.5.0 warning pointed at the params concerned, except validation-only ones (`assign
+false`), which it never warned about: they change too — their reader returns `nil` instead of their
+`default`, and a framed `allowing` weighs their null.
 `ModelMapper.reset_deprecation_warnings!` and `reset_explicit_null_warnings!` still exist, and do
 nothing: no warning is emitted once per param any more.
 

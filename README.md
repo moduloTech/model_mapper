@@ -300,7 +300,7 @@ to `association` (`nullable:` and `immediate_write:` are also accepted as keywor
 | `nullable` | Bool | `true` | What a clearing request (`null`, or `[]` on a multi-valued param) does: `true` clears, `false` refuses — see below |
 | `immediate_write` | Bool | undeclared | Reference `association`, or an `attribute` named `<collection>_ids`: whether a change ActiveRecord writes to the DB during the map is accepted (`true`) or refused (`false`, and undeclared) — see below |
 | `assign` | Bool | `true` | Include in `assign_attributes`; `false` = validate-only (was `save`, which now raises) |
-| `default` | value / Proc | `nil` | Fallback when the source value is `nil`/missing; `authorize: false` exempts it from `authorize` |
+| `default` | value / Proc | `nil` | Fallback when the key is absent or blank (an explicit null clears instead, unless `required`); `authorize: false` exempts it from `authorize` |
 | `default_on_invalid` | Bool | `false` | Use `default` when validation fails instead of raising |
 | `type` | Symbol | `nil` | Scalar validation type (`:integer`, `:float`, `:date`, `:boolean`, `:enumerated`, `:custom`) or `:array` |
 | `of` | Symbol | `nil` | Element type for a `type :array` of **scalars** |
@@ -401,7 +401,8 @@ end
   `allowing [true, false]` refuses the null it does not list where `allowing [true, false, nil]`
   accepts it. `nullable false` refuses the null before the rule. So a list that does not name `nil`
   answers a `null` with an error rather than a clear: name `nil` in it, or declare `nullable false`,
-  whichever the client should be told.
+  whichever the client should be told. A rule lambda — `allowing`, `authorize`, a `type :custom`
+  validator — is handed that `nil` too: write it to answer for `nil`.
 - On a `type :array` the rule weighs elements, so an emptied list (`[]`, a clearing) has none to
   weigh: what governs it there is `nullable`. A refused element carries the `message` under its own
   indexed path (`numbers.1`). Everything above holds element by element — the authorization is
@@ -455,7 +456,8 @@ end
 - `nullable` takes `true` or `false` (`nil` leaves it undeclared, which reads as `true`); anything else
   raises `ConfigurationError`. Undeclared and `true` differ only for a child mapper, which keeps a
   parent's declaration unless it makes its own.
-- A `default` answers an absent key only: a clearing request erases the value instead.
+- A clearing request does not fall back to the `default`: it erases the value instead. The `default`
+  still answers an absent key, a blank value and, on a `required` param, a null.
 - `required` wins: a required param refuses a null or an empty list whatever `nullable` says.
 - `""` and `{}` are not clearing requests and keep being skipped, and `[]` is one only on a
   multi-valued param — on a scalar it names nothing to clear, and says nothing whatever `nullable`
@@ -578,7 +580,7 @@ doing rather than the caller's, exempt it:
 
 ```ruby
 attribute :status do
-  default 'active', authorize: false   # applied even to a caller refused on this field, absent or null alike
+  default 'active', authorize: false   # applied even to a caller refused on this field, when the key is absent
   authorize -> { admin? }              # governs what the caller sends
 end
 ```

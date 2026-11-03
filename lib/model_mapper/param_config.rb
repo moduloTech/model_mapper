@@ -221,10 +221,10 @@ module ModelMapper
       raise ModelMapper::SaveOptionRenamedError, @name
     end
 
-    # Fallback value when the source value is nil/missing. `authorize: false` exempts it from the
-    # field's `authorize` rule: the default is the mapper's own doing, so it is applied even to a
-    # caller who may not SET the field. Without it, a default that produces a value is weighed like
-    # any other write.
+    # Fallback value when the key is absent or blank — an explicit null clears instead, unless the param
+    # is required. `authorize: false` exempts it from the field's `authorize` rule: the default is the
+    # mapper's own doing, so it is applied even to a caller who may not SET the field. Without it,
+    # a default that produces a value is weighed like any other write.
     #   default 'active'
     #   default 'active', authorize: false
     def default(value, authorize: nil)

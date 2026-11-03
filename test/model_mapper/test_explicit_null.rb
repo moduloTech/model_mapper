@@ -28,7 +28,6 @@ class TestExplicitNull < Minitest::Test
     Widget.delete_all
     Category.delete_all
     Part.delete_all
-    ModelMapper.reset_explicit_null_warnings!
   end
 
   def mapper(&block)
@@ -39,9 +38,9 @@ class TestExplicitNull < Minitest::Test
     end
   end
 
-  # --- undeclared: cleared, like `nullable true`, without a warning ---
+  # --- undeclared: cleared, like `nullable true` ---
 
-  def test_undeclared_null_clears_the_value_without_warning
+  def test_undeclared_null_clears_the_value
     klass = mapper { attribute :name }
     widget = Widget.create!(name: 'old')
 
@@ -135,9 +134,9 @@ class TestExplicitNull < Minitest::Test
     assert_nil ModelMapper.reset_explicit_null_warnings!
   end
 
-  # --- not an explicit null: no warning, no change ---
+  # --- not a clearing request: no change ---
 
-  def test_absent_blank_and_empty_values_do_not_warn
+  def test_absent_blank_and_empty_values_change_nothing
     klass = mapper do
       attribute :name
       attribute :numbers do
@@ -149,8 +148,13 @@ class TestExplicitNull < Minitest::Test
       end
     end
 
+    category = Category.create!(name: 'c')
     [{}, { name: '' }, { name: [] }, { numbers: [''] }, { category: {} }].each do |payload|
-      assert_output(nil, '') { klass.map_to_model(Widget.new, payload) }
+      widget = Widget.new(name: 'kept', numbers: [1], category:)
+      klass.map_to_model(widget, payload)
+      assert_equal 'kept', widget.name, payload.inspect
+      assert_equal [1], widget.numbers, payload.inspect
+      assert_equal category, widget.category, payload.inspect
     end
   end
 
@@ -213,7 +217,7 @@ class TestExplicitNull < Minitest::Test
     end
   end
 
-  def test_required_null_raises_without_warning_even_when_nullable_true
+  def test_required_null_raises_even_when_nullable_true
     klass = mapper do
       attribute :name do
         required true
@@ -230,24 +234,32 @@ class TestExplicitNull < Minitest::Test
     assert_equal 'kept', widget.name
   end
 
-  def test_validation_only_param_does_not_warn
+  # A validation-only param is cleared too: its reader returns nil — not its `default` — and the record
+  # is left alone.
+  def test_validation_only_param_clears_its_reader_only
     klass = mapper do
       attribute :name do
         assign false
+        default 'dflt'
       end
     end
+    widget = Widget.new(name: 'kept')
 
-    assert_output(nil, '') { klass.map_to_model(Widget.new, { name: nil }) }
+    result = klass.map_to_model!(widget, { name: nil })
+    assert_nil result.name
+    assert_equal 'kept', widget.name
   end
 
-  def test_map_if_false_skips_before_warning
+  def test_map_if_false_skips_the_null
     klass = mapper do
       attribute :name do
         map_if -> { false }
       end
     end
+    widget = Widget.new(name: 'kept')
 
-    assert_output(nil, '') { klass.map_to_model(Widget.new, { name: nil }) }
+    klass.map_to_model!(widget, { name: nil })
+    assert_equal 'kept', widget.name
   end
 
   # A sub-mapper association stages its records in memory and has no value to clear: a null or an empty
@@ -272,9 +284,9 @@ class TestExplicitNull < Minitest::Test
     end
   end
 
-  # --- nullable true: clears now ---
+  # --- nullable true: clears, like undeclared ---
 
-  def test_nullable_true_clears_a_scalar_without_warning
+  def test_nullable_true_clears_a_scalar
     klass = mapper do
       attribute :name, nullable: true
     end
@@ -392,7 +404,7 @@ class TestExplicitNull < Minitest::Test
 
   # --- nullable false: refuses the null ---
 
-  def test_nullable_false_keyword_refuses_a_null_without_warning
+  def test_nullable_false_keyword_refuses_a_null
     klass = mapper do
       attribute :name, nullable: false
     end
@@ -518,7 +530,7 @@ class TestExplicitNull < Minitest::Test
     assert_equal [1, 2], widget.numbers
   end
 
-  def test_required_empty_list_raises_without_warning
+  def test_required_empty_list_raises
     error = nil
     assert_output(nil, '') do
       error = assert_raises(ModelMapper::ValidationError) do
