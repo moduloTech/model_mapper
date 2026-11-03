@@ -488,6 +488,7 @@ class TestExplicitNull < Minitest::Test
       association :parts, many: true do
         allowing -> { Part.all }
         nullable true
+        immediate_write true
       end
     end
     widget = Widget.create!
