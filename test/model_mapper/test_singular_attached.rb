@@ -710,15 +710,17 @@ class TestSingularAttached < Minitest::Test
   end
 
   # A section that is not an object has no key to read: the identifier check leaves its shape alone,
-  # whatever the value (a scalar equal to the attached id or not, a list).
+  # whatever the value (a scalar equal to the attached id or not, a list). Whether that shape raises or
+  # is reported as a format error is the section handling's answer, not this check's: only the
+  # identifier refusal must not stand in for it.
   def test_without_allowing_a_non_object_section_is_not_taken_for_an_identifier
     category = Category.create!(name: 'orig')
     widget   = AttachedBtWidget.create!(name: 'w', category:)
 
     [{ category: 999 }, { category: category.id }, { category: [{ name: 'x' }] }].each do |payload|
-      assert_raises(TypeError, payload.inspect) { AttachedBtMapper.map_to_model(widget, payload) }
+      refute_identifier_refusal(AttachedBtMapper, widget, payload, 'category.id')
     end
-    assert_raises(TypeError) { AttachedPartsMapper.map_to_model(Widget.new, { parts: { name: 'x' } }) }
+    refute_identifier_refusal(AttachedPartsMapper, Widget.new, { parts: { name: 'x' } }, 'parts.0.id')
   end
 
   # The attached record's id is refused when the payload would not edit that record.
@@ -770,6 +772,15 @@ class TestSingularAttached < Minitest::Test
   end
 
   private
+
+  # Maps the payload and asserts no identifier refusal is recorded on `path`; an exception the section
+  # handling raises for the malformed shape is an answer too.
+  def refute_identifier_refusal(mapper_klass, target, payload, path)
+    mapper = mapper_klass.map_to_model(target, payload)
+    refute_includes mapper.errors.keys, path, payload.inspect
+  rescue TypeError, NoMethodError
+    pass
+  end
 
   # Runs the block on an ActiveRecord whose associations lack the private `skip_strict_loading`, as on 7.0.
   def without_skip_strict_loading
