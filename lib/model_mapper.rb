@@ -675,7 +675,9 @@ module ModelMapper
         next if existing && singular_replace_rejected?(target, assoc, existing, param_config, validation_errors)
 
         # Without an identifier, the payload edits the record already attached, if any.
-        existing ||= attached_record(target, assoc)
+        existing ||= attached_record(target, assoc, param_config, source_params, validation_errors)
+        next if existing == :rejected
+
         run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors, existing:)
       end
     end
@@ -704,11 +706,47 @@ module ModelMapper
   end
 
   # The record a singular association (belongs_to / has_one) currently holds — persisted, or built
-  # earlier and still unsaved — or nil. A payload section that names no record edits this one instead
-  # of building a fresh record: building would leave it orphaned (and a has_one build nullifies its
-  # foreign key at once, a write during the map). `load_target` only reads.
-  def attached_record(target, assoc)
-    target.association(assoc.to_sym).load_target
+  # earlier and still unsaved — for a payload section that names no record to edit instead of building
+  # a fresh one: building would leave it orphaned (and a has_one build nullifies its foreign key at
+  # once, a write during the map). Returns nil — build as usual — when editing it would go wrong:
+  #   - the parent does not autosave the association (no accepts_nested_attributes_for / autosave), so
+  #     its save would drop the edit of a persisted record while the map reports success;
+  #   - the owner's foreign key changed before this point (a mapped `*_id` attribute, a hook): the
+  #     record it now points to was picked by id outside any `allowing` scope;
+  #   - the record is marked for destruction, so the parent's save would delete it.
+  # Under an upsert the record must still sit in the `allowing` scope, as it must when its id is sent:
+  # otherwise the refusal is recorded on the id path and :rejected is returned.
+  def attached_record(target, assoc, param_config, source_params, validation_errors)
+    association = target.association(assoc.to_sym)
+    reflection  = association.reflection
+    return nil unless reflection.options[:autosave]
+    return nil if reflection.belongs_to? && foreign_key_changed?(target, reflection)
+
+    record = load_singular_target(association)
+    return nil if record.nil? || record.marked_for_destruction?
+    return record unless param_config.upsert? && record.persisted?
+    return record if allowed_values(param_config, source_params).where(record.class.primary_key => [record.id]).exists?
+
+    field_path = reference_field_path(param_config, nil, param_config.field_value)
+    validation_errors[field_path] =
+      ModelMapper::InvalidValueError.new(field_path, details: I18n.t('errors.invalid_value_details.invalid_referential'))
+    :rejected
+  end
+
+  # Whether a belongs_to's foreign key (or polymorphic type) will change on the owner's next save.
+  def foreign_key_changed?(target, reflection)
+    columns = Array(reflection.foreign_key)
+    columns << reflection.foreign_type if reflection.polymorphic?
+    columns.any? { |column| target.will_save_change_to_attribute?(column) }
+  end
+
+  # Load a singular association's target, as a read only: a `strict_loading` owner would otherwise raise
+  # on a belongs_to the map merely inspects (private API, hence `send`, as for collections in
+  # current_association_records; an ActiveRecord without it loads as usual).
+  def load_singular_target(association)
+    return association.load_target unless association.respond_to?(:skip_strict_loading, true)
+
+    association.send(:skip_strict_loading) { association.load_target }
   end
 
   # Decide the fate of an element under an upsert (`with` + `allowing`) by looking its identifier up in
