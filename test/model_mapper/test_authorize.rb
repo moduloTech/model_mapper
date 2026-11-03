@@ -695,14 +695,16 @@ class TestAuthorize < Minitest::Test
     assert_nil widget.status
   end
 
-  # A null clears: the default the rule refuses never comes into play, and the clear the rule lets
-  # through lands.
-  def test_an_explicit_null_clears_instead_of_reaching_a_refused_default
+  # A null asks to clear, so the default the rule refuses never comes into play: the clear itself is
+  # weighed, and the enumerated list, which does not name nil, refuses it. Nothing lands.
+  def test_an_explicit_null_does_not_reach_a_refused_default
     widget = Widget.new(status: 'user')
     mapper = AuthzGuardedDefaultMapper.map_to_model(widget, { status: nil })
 
-    assert_predicate mapper, :valid?
-    assert_nil widget.status
+    assert_equal ['status'], mapper.errors.keys
+    assert_kind_of ModelMapper::InvalidValueError, mapper.errors['status']
+    refute_kind_of ModelMapper::UnauthorizedFieldError, mapper.errors['status']
+    assert_equal 'user', widget.status
   end
 
   def test_a_blank_value_cannot_smuggle_a_refused_default
