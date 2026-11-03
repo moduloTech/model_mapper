@@ -152,8 +152,12 @@ built earlier and still unsaved. A 1‑N element without an id is always a creat
 >   followed: that record was picked by id outside any scope;
 > - a record marked for destruction is left to its destruction.
 >
+> On a `has_one`, that build still replaces the current child at once (its foreign key is nullified
+> during the map), as any `has_one` build does.
+>
 > Under an upsert, the attached record must sit in `allowing`, exactly as when its id is sent: one
-> outside the scope is refused on the id path (e.g. `category.id`), never edited.
+> outside the scope — or, on a polymorphic `belongs_to`, of another class than the scope's — is refused
+> on the id path (e.g. `category.id`), never edited.
 >
 > Editing is an update: a sub-mapper `default` lands on a field the payload leaves out, as on an
 > upsert by id. And a `belongs_to` target is the record itself — when several parents share it, they
