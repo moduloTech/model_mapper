@@ -112,6 +112,86 @@ class AttachedHasOneUpsertMapper
 
 end
 
+# Parents that do not autosave the association: their save would drop an edit of a persisted record.
+class AttachedPlainBtWidget < ActiveRecord::Base
+
+  self.table_name = 'widgets'
+  belongs_to :category, optional: true
+
+end
+
+class AttachedPlainHasOneWidget < ActiveRecord::Base
+
+  self.table_name = 'widgets'
+  has_one :manual, foreign_key: :widget_id
+
+end
+
+# A parent that can destroy its category through nested attributes.
+class AttachedDestroyBtWidget < ActiveRecord::Base
+
+  self.table_name = 'widgets'
+  belongs_to :category, optional: true
+  accepts_nested_attributes_for :category, allow_destroy: true
+
+end
+
+class AttachedPlainBtMapper
+
+  include ModelMapper
+
+  map_model do
+    association :category_attributes do
+      from :category
+      with AttachedBtCategoryMapper
+    end
+  end
+
+end
+
+class AttachedPlainHasOneMapper
+
+  include ModelMapper
+
+  map_model do
+    association :manual_attributes do
+      from :manual
+      with AttachedManualMapper
+    end
+  end
+
+end
+
+# An upsert narrowed to enabled categories.
+class AttachedBtScopedUpsertMapper
+
+  include ModelMapper
+
+  map_model do
+    association :category_attributes do
+      from :category
+      with AttachedBtCategoryMapper
+      allowing -> { Category.where(enabled: true) }
+    end
+  end
+
+end
+
+# The owner's foreign key is mapped from the payload before the association.
+class AttachedBtWithForeignKeyMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute(:category_id) { type :integer }
+    association :category_attributes do
+      from :category
+      with AttachedBtCategoryMapper
+    end
+  end
+
+end
+
 class TestSingularAttached < Minitest::Test
 
   # --- belongs_to -------------------------------------------------------------------------------------
@@ -273,6 +353,96 @@ class TestSingularAttached < Minitest::Test
     assert_same draft, widget.manual
     assert_difference_of_one(Manual) { widget.save! }
     assert_equal 'final', widget.reload.manual.title
+  end
+
+  # --- when the attached record is not the one to edit -----------------------------------------------
+
+  # Leaving the id out must not reach a record that sending its id would be refused for.
+  def test_upsert_refuses_an_attached_record_outside_allowing
+    category = Category.create!(name: 'orig', enabled: false)
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedBtScopedUpsertMapper.map_to_model(widget, { category: { name: 'renamed' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+    widget.save!
+    assert_equal 'orig', category.reload.name
+  end
+
+  def test_upsert_edits_an_attached_record_inside_allowing
+    category = Category.create!(name: 'orig', enabled: true)
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedBtScopedUpsertMapper.map_to_model(widget, { category: { name: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', category.reload.name
+  end
+
+  # A foreign key the payload just set picks a record by id outside any scope: a new one is built.
+  def test_belongs_to_builds_when_the_foreign_key_changed_in_the_map
+    victim = Category.create!(name: 'victim')
+    widget = AttachedBtWidget.create!(name: 'w', category: Category.create!(name: 'own'))
+
+    mapper = AttachedBtWithForeignKeyMapper.map_to_model(widget, { category_id: victim.id, category: { name: 'pwned' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'victim', victim.reload.name
+    assert_equal 'pwned', widget.reload.category.name
+    refute_equal victim.id, widget.category_id
+  end
+
+  # Without autosave, the parent's save would drop the edit: a new record is built, as it always was.
+  def test_belongs_to_without_autosave_builds_a_record
+    category = Category.create!(name: 'orig')
+    widget   = AttachedPlainBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedPlainBtMapper.map_to_model(widget, { category: { name: 'fresh' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    assert_difference_of_one(Category) { widget.save! }
+    assert_equal 'fresh', widget.reload.category.name
+    assert_equal 'orig', category.reload.name
+  end
+
+  def test_has_one_without_autosave_builds_a_record
+    manual = Manual.create!(title: 'orig')
+    widget = AttachedPlainHasOneWidget.create!(name: 'w', manual:)
+
+    mapper = AttachedPlainHasOneMapper.map_to_model(widget, { manual: { title: 'fresh' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'fresh', widget.reload.manual.title
+    assert_equal 'orig', manual.reload.title
+  end
+
+  # A strict_loading owner is only read, as for a collection: the map does not raise.
+  def test_belongs_to_on_a_strict_loading_parent
+    category = Category.create!(name: 'orig')
+    widget   = AttachedBtWidget.strict_loading.find(AttachedBtWidget.create!(name: 'w', category:).id)
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { name: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', category.reload.name
+  end
+
+  # A record marked for destruction would be deleted by the parent's save: a new one is built instead.
+  def test_belongs_to_marked_for_destruction_builds_a_record
+    category = Category.create!(name: 'orig')
+    widget   = AttachedDestroyBtWidget.create!(name: 'w', category:)
+    widget.category.mark_for_destruction
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { name: 'fresh' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'fresh', widget.reload.category.name
   end
 
   # --- many: true -------------------------------------------------------------------------------------

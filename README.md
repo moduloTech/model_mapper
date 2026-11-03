@@ -144,10 +144,26 @@ already holds, else a new one. A `PATCH { address: { city: 'Lyon' } }` on a pare
 like `accepts_nested_attributes_for … update_only: true`. The record attached may be persisted or
 built earlier and still unsaved. A 1‑N element without an id is always a creation.
 
+> The attached record is edited only when that edit is safe; otherwise a new record is built, as
+> without one:
+> - the parent must autosave the association (`accepts_nested_attributes_for`, or `autosave: true`),
+>   else its save would drop the edit of a persisted record;
+> - a `belongs_to` whose foreign key changed earlier in the map (a mapped `*_id`, a hook) is not
+>   followed: that record was picked by id outside any scope;
+> - a record marked for destruction is left to its destruction.
+>
+> Under an upsert, the attached record must sit in `allowing`, exactly as when its id is sent: one
+> outside the scope is refused on the id path (e.g. `category.id`), never edited.
+>
+> Editing is an update: a sub-mapper `default` lands on a field the payload leaves out, as on an
+> upsert by id. And a `belongs_to` target is the record itself — when several parents share it, they
+> all see the edit.
 
-> **Update by id is scoped only.** Looking a record up by its id happens exclusively under upsert
-> (`allowing` **and** `with`) and only for an id inside the scope. `with` alone never reads an id — it
-> builds, or on a 1‑1 edits the record the parent already holds — so there is no unscoped lookup. The attach is in-memory; persistence is deferred to the parent's own save,
+
+> **Update by id is scoped only.** Looking a record up by an id from the payload happens exclusively
+> under upsert (`allowing` **and** `with`) and only for an id inside the scope. `with` alone never reads
+> an id — it builds, or on a 1‑1 edits the record the parent already held before the map — so there is
+> no unscoped lookup. The attach is in-memory; persistence is deferred to the parent's own save,
 > which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
 >
 > The attached record is also **linked**: a `belongs_to` gets the parent's foreign key, a 1‑N element

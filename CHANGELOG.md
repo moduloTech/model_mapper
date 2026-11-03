@@ -217,9 +217,16 @@ refusal of a different `has_one` child), else the record the association already
 built earlier and unsaved), else a new one — like `accepts_nested_attributes_for … update_only: true`.
 `many: true` is unchanged: an element without an id is still a creation.
 
+A new record is still built when editing the attached one would go wrong: the parent does not
+autosave the association (its save would drop the edit), a `belongs_to` foreign key changed earlier in
+the map (the record would be picked by id outside any scope), or the record is marked for
+destruction. Under an upsert, an attached record outside `allowing` is refused on the id path, as its
+id would be. A `strict_loading` parent is read without raising.
+
 **Behaviour change:** a mapper that relied on a 1‑1 payload always creating a fresh record now updates
-the attached one. To replace it, send the new record's id under an upsert (`belongs_to`), or replace
-the `has_one` child in the caller.
+the attached one. A sub-mapper `default` then lands on a field the payload leaves out, and a
+`belongs_to` target shared by several parents changes for all of them. To replace the record, send
+the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller.
 
 ## 0.5.0
 
