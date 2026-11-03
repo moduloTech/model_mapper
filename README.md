@@ -108,7 +108,8 @@ map_model do
     allowing -> { current_company.tags }
   end
 
-  # Upsert — an id ∈ `allowing` updates that record in place; no id builds a new one.
+  # Upsert — an id ∈ `allowing` updates that record in place; no id builds a new one (1‑1: no id
+  # updates the record already attached, if any).
   association :missions_attributes, many: true do
     from :missions
     with MissionMapper, -> { { company: call_origin.company } }
@@ -133,13 +134,20 @@ end
 | —   | —   | — | value absent → skipped (or `required` → error) |
 | yes | no  | yes | **link** — id validated ∈ `allowing`; the OBJECT is assigned |
 | yes | no  | no  | skipped (or `required` → error) — an id is required to link |
-| no  | yes | (ignored) | **build** (create) via the sub-mapper — any id in the payload is ignored |
+| no  | yes | (ignored) | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** — any id in the payload is ignored |
 | yes | yes | yes | **update** — id validated ∈ `allowing`; that record is attached and updated **in place** |
-| yes | yes | no  | **build** (create) via the sub-mapper |
+| yes | yes | no  | 1‑1: **update** the record already attached, else **build** · 1‑N: **build** |
 
-> **Update is scoped only.** In-place update happens exclusively under upsert (`allowing` **and** `with`)
-> and only for an id inside the scope. `with` alone always creates — it never updates by id — so there
-> is no unscoped update path. The attach is in-memory; persistence is deferred to the parent's own save,
+**1‑1 resolution with `with`:** the id sent in the payload (upsert), else the record the association
+already holds, else a new one. A `PATCH { address: { city: 'Lyon' } }` on a parent whose `belongs_to
+:address` / `has_one :address` is set edits that address — same id, no new row, nothing orphaned —
+like `accepts_nested_attributes_for … update_only: true`. The record attached may be persisted or
+built earlier and still unsaved. A 1‑N element without an id is always a creation.
+
+
+> **Update by id is scoped only.** Looking a record up by its id happens exclusively under upsert
+> (`allowing` **and** `with`) and only for an id inside the scope. `with` alone never reads an id — it
+> builds, or on a 1‑1 edits the record the parent already holds — so there is no unscoped lookup. The attach is in-memory; persistence is deferred to the parent's own save,
 > which cascades to the child through `accepts_nested_attributes_for` (declare it on the parent).
 >
 > The attached record is also **linked**: a `belongs_to` gets the parent's foreign key, a 1‑N element

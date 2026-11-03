@@ -674,6 +674,8 @@ module ModelMapper
         next if existing && outside_association_scope?(target, assoc, existing, param_config, nil, validation_errors)
         next if existing && singular_replace_rejected?(target, assoc, existing, param_config, validation_errors)
 
+        # Without an identifier, the payload edits the record already attached, if any.
+        existing ||= attached_record(target, assoc)
         run_sub_mapper(target, assoc, sub_source, param_config.mapper_value, context, validation_errors, existing:)
       end
     end
@@ -701,6 +703,14 @@ module ModelMapper
     true
   end
 
+  # The record a singular association (belongs_to / has_one) currently holds — persisted, or built
+  # earlier and still unsaved — or nil. A payload section that names no record edits this one instead
+  # of building a fresh record: building would leave it orphaned (and a has_one build nullifies its
+  # foreign key at once, a write during the map). `load_target` only reads.
+  def attached_record(target, assoc)
+    target.association(assoc.to_sym).load_target
+  end
+
   # Decide the fate of an element under an upsert (`with` + `allowing`) by looking its identifier up in
   # the `allowing` scope — the SAME lookup as 1-1/1-N references (lookup_reference), so both modes accept
   # the same `allowing` shapes and refuse the same identifiers:
@@ -718,9 +728,10 @@ module ModelMapper
   end
 
   # Map the sub-payload onto a nested record and fold the sub-mapper's combined errors into the parent
-  # under the prefixed key (e.g. "parts.0.name"). CREATE builds a fresh record; UPDATE (upsert, when
-  # `existing` is the in-scope record) attaches that record to the association in memory and maps onto
-  # it — persistence is deferred to the parent's own save, which cascades via accepts_nested_attributes_for.
+  # under the prefixed key (e.g. "parts.0.name"). CREATE builds a fresh record; UPDATE (`existing`: the
+  # in-scope upsert record, or the record a singular association already holds) attaches that record to
+  # the association in memory and maps onto it — persistence is deferred to the parent's own save, which
+  # cascades via accepts_nested_attributes_for.
   def run_sub_mapper(target, assoc, sub_params, mapper_klass, context, validation_errors, index: nil, existing: nil)
     sub_record = existing || build_sub_record(target, assoc, index)
     attach_existing_record(target, assoc, existing, index) if existing
