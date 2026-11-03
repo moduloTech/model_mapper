@@ -88,6 +88,35 @@ or `of :any`, which leaves the element as it is), element by element, with the r
 element (`numbers.2`). An element frame answers to the same order as a scalar one: it is weighed once
 the authorization has passed, and its refusal is outside what `default_on_invalid` answers for.
 
+### Fixed — a malformed section is a validation error, not an escaped exception
+
+A value standing where the payload is expected to carry a section is now a validation error naming
+that section, instead of an error escaping the mapper (a `TypeError`, or a `NoMethodError` for a
+collection that is not a list):
+
+- a scalar or a list in the middle of a `from` path (`{ info: 'x' }` read through
+  `from :info, :status`) → `InvalidFormatError` on `info`, `expected_format: :object`. The first
+  level that is not a section is named (`info.detail` for `from :info, :detail, :status`), and the
+  fields sharing it are refused once;
+- a scalar or a list as a sub-mapper's section → `InvalidFormatError` on the section, `:object`;
+- a collection that is not a list → `InvalidFormatError` on the section, `:array` — an empty string
+  or an empty object included, which used to be skipped as an empty list; every element that is not
+  an object → one error per element, named by its index (`parts.1`).
+
+That error used to escape `map_to_model` and `map_to_model!` alike — or, when another field had
+already failed, to be recorded as an `InvalidValueError` on the leaf (`info.status`) carrying Ruby's
+message: the same payload got two different answers depending on the rest of it. The mapper's own
+reads now answer the same; a `map_if`, `required` or `allowing` lambda that digs into a malformed
+section itself still raises from that lambda. An absent or `nil` section is still absent, an empty
+list still builds nothing, and a mapper given a non-keyed root still raises `TypeError`: the root is
+the caller's own input, not a client value.
+
+Payloads accepted before are now refused: a `nil` element of a collection (`parts: [nil]`, which
+built an empty record), on its index; and a bare id where an upsert whose sub-mapper reads nothing at
+its root expects an object, which attached the record — in a collection (`parts: [3]`, refused on
+`parts.0`) as on a single association (`manual: 3`, refused on `manual`). A sub-mapper that reads an
+attribute raised `TypeError` on either.
+
 ### Changed
 
 `false` now reaches the declared type validator on every param that declares an `allowing` — where a
@@ -177,33 +206,6 @@ false`), which it never warned about: they change too — their reader returns `
 `default`, and a framed `allowing` weighs their null.
 `ModelMapper.reset_deprecation_warnings!` and `reset_explicit_null_warnings!` still exist, and do
 nothing: no warning is emitted once per param any more.
-
-### Fixed
-
-A value standing where the payload is expected to carry a section is now a validation error naming
-that section, instead of a `TypeError` escaping the mapper:
-
-- a scalar or a list in the middle of a `from` path (`{ info: 'x' }` read through
-  `from :info, :status`) → `InvalidFormatError` on `info`, `expected_format: :object`. The first
-  level that is not a section is named (`info.detail` for `from :info, :detail, :status`), and the
-  fields sharing it are refused once;
-- a scalar or a list as a sub-mapper's section → `InvalidFormatError` on the section, `:object`;
-- a collection that is not a list → `InvalidFormatError` on the section, `:array` — an empty string
-  or an empty object included, which used to be skipped as an empty list; every element that is not
-  an object → one error per element, named by its index (`parts.1`).
-
-The `TypeError` used to escape `map_to_model` and `map_to_model!` alike — or, when another field had
-already failed, to be recorded as an `InvalidValueError` on the leaf (`info.status`) carrying Ruby's
-message: the same payload got two different answers depending on the rest of it. The mapper's own
-reads now answer the same; a `map_if`, `required` or `allowing` lambda that digs into a malformed
-section itself still raises from that lambda. An absent or `nil` section is still absent, an empty
-list still builds nothing, and a mapper given a non-keyed root still raises `TypeError`: the root is
-the caller's own input, not a client value.
-
-Two payloads accepted before are now refused, on the element's index: a `nil` element of a
-collection (`parts: [nil]`, which built an empty record), and a bare id in an upsert collection
-whose sub-mapper reads nothing at its root (`parts: [3]`, which attached the record) — any
-sub-mapper that reads an attribute raised `TypeError` on it.
 
 ## 0.5.0
 
