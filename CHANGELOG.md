@@ -155,10 +155,11 @@ default are opposite intentions, so the clear wins, as it already did under `nul
 A clear is a value like any other, so what weighs a value weighs it:
 
 - `authorize` weighs it, where it used to weigh the `default` that replaced the null, or nothing.
-- Every rule that reads the value — an `allowing` or `authorize` lambda, a `type :custom` validator,
+- Every rule that reads the value — a framed `allowing` lambda, an `authorize` lambda,
   `before_assignation` — is handed `nil` (or `[]`) on an optional param that receives a null. One
   that does not answer for it raises out of the non-raising `map_to_model`: `allowing ->(v) {
   v.positive? }` given `{ quantity: null }` now raises `NoMethodError` where 0.5.0 skipped the key.
+  A `type :custom` validator is not: a clear skips the type validator, so it lands as `nil`.
 - A framed `allowing` that does not name `nil` refuses it: `attribute(:status) { allowing %w[active
   inactive] }` given `{ status: null }` answered nothing on 0.5.0 and now answers a 422 on `status`,
   neither clearing nor ignoring it. Name `nil` in the list to accept the clear, or declare

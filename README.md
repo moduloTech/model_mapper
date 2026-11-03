@@ -401,8 +401,8 @@ end
   `allowing [true, false]` refuses the null it does not list where `allowing [true, false, nil]`
   accepts it. `nullable false` refuses the null before the rule. So a list that does not name `nil`
   answers a `null` with an error rather than a clear: name `nil` in it, or declare `nullable false`,
-  whichever the client should be told. A rule lambda — `allowing`, `authorize`, a `type :custom`
-  validator — is handed that `nil` too: write it to answer for `nil`.
+  whichever the client should be told. A framed `allowing` lambda and an `authorize` lambda are handed
+  that `nil` too: write them to answer for `nil`. A `type :custom` validator never sees a clear.
 - On a `type :array` the rule weighs elements, so an emptied list (`[]`, a clearing) has none to
   weigh: what governs it there is `nullable`. A refused element carries the `message` under its own
   indexed path (`numbers.1`). Everything above holds element by element — the authorization is
