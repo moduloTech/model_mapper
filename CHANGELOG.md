@@ -215,7 +215,7 @@ orphaned in the database, and on a `has_one` the build nullified its foreign key
 during the map. The record is now resolved in order — the id sent (upsert, unchanged, including the
 refusal of a different `has_one` child), else the record the association already holds (persisted, or
 built earlier and unsaved), else a new one — like `accepts_nested_attributes_for … update_only: true`.
-`many: true` is unchanged: an element without an id is still a creation.
+On `many: true` an element without an id is still a creation.
 
 A new record is still built when editing the attached one would go wrong: the parent does not
 autosave the association (its save would drop the edit), a `belongs_to` foreign key changed earlier in
@@ -225,16 +225,24 @@ map, as it always did. Under an upsert, an attached record outside `allowing` �
 another class than the scope's, on a polymorphic `belongs_to` — is refused on the id path, as its id
 would be. A `strict_loading` parent is read without raising.
 
-A sub-mapper without `allowing` ignored an id in its section, so the payload edited or created a
-record other than the one it named. That id is now refused on its path (`address.id`, `parts.0.id`),
-except, on a 1‑1, the id of the record already attached — a client sending back the shape it read.
-
 **Behaviour change:** a mapper that relied on a 1‑1 payload always creating a fresh record now updates
 the attached one. A sub-mapper `default` then lands on a field the payload leaves out, and a
 `belongs_to` target shared by several parents changes for all of them. To replace the record, send
-the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller. A
-payload that sent an id under a `with`-only association is now refused: drop the id, or declare
-`allowing` to select records by it.
+the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller.
+
+### Fixed — a sub-mapper without `allowing` refuses an id it would ignore
+
+An association declared with `with` and no `allowing`, 1‑1 or `many: true`, ignored an id in its
+section: the payload then edited or created a record other than the one it named. That id is now
+refused on its path (`address.id`, `parts.0.id`, `identifier_not_accepted`). On a 1‑1 the id of the
+record already attached is accepted, when the payload edits that record (see above) — a client may
+send back the shape it read; it is taken as sent and cast by the primary key. Not weighed: a blank id,
+a key the sub-mapper reads itself as data (`attribute(:external_ref) { from :id }`), and a section that
+is not an object.
+
+**Behaviour change:** a payload that sent an id under a `with`-only association — 1‑1 or 1‑N — is now
+refused: drop the id, or declare `allowing` (`-> { Model.all }` when any record will do) to select
+records by it.
 
 ## 0.5.0
 

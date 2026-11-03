@@ -712,12 +712,17 @@ module ModelMapper
   # be ignored, and the payload would edit — or create — a record other than the one it names. So an
   # identifier is refused on its params path (e.g. "address.id", "parts.0.id"), unless it names the
   # very record the edit lands on (`attached`, a singular association's attached record): a client may
-  # send back the shape it read. A blank identifier names nothing and is not weighed.
+  # send back the shape it read. Not weighed: a blank identifier (it names nothing), a key the
+  # sub-mapper reads itself (it is data, e.g. a partner's own id), and a section that is not an object
+  # (no key to read; its shape is not this check's to judge).
   def identifier_not_accepted?(param_config, element, attached, validation_errors, index: nil)
     return false if param_config.upsert?
+    return false unless element.respond_to?(:dig) && !element.is_a?(Array)
 
     identifier = param_config.field_value
-    id         = reference_id(element, identifier)
+    return false if reads_key?(param_config.mapper_value, identifier)
+
+    id = reference_id(element, identifier)
     return false if id.nil? || (id.respond_to?(:empty?) && id.empty?)
     return false if attached && names_record?(attached, identifier, id)
 
@@ -727,13 +732,25 @@ module ModelMapper
     true
   end
 
+  # Whether a sub-mapper reads `key` at the root of its section, through one of its own params.
+  def reads_key?(mapper_klass, key)
+    config = mapper_klass.respond_to?(:model_mapper_config) && mapper_klass.model_mapper_config
+    return false unless config
+
+    config.params.each_value.any? { |param_config| param_config.keys.first.to_s == key.to_s }
+  end
+
   # Whether `id` names this persisted record on its `identifier` column, taken as sent (exact_reference_id?)
-  # and cast by the column, as `find_by` would compare it.
+  # and cast by the column, as `find_by` would compare it. `:id` is the primary key, whatever its column
+  # is named; a composite key is never named by a single value.
   def names_record?(record, identifier, id)
     return false if id.respond_to?(:each) || !record.persisted?
-    return false unless exact_reference_id?(record.class, identifier, id)
 
-    record.class.type_for_attribute(identifier.to_s).cast(id) == record.public_send(identifier)
+    column = identifier.to_s == 'id' ? record.class.primary_key : identifier.to_s
+    return false unless column.is_a?(String)
+    return false unless exact_reference_id?(record.class, column, id)
+
+    record.class.type_for_attribute(column).cast(id) == record.public_send(identifier)
   end
 
   # The record a singular association (belongs_to / has_one) currently holds — persisted, or built

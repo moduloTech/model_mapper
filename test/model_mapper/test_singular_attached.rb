@@ -231,6 +231,68 @@ class AttachedPolyUpsertMapper
 
 end
 
+# A sub-mapper reading the section's `id` as data: a partner's own reference.
+class AttachedExternalPartMapper
+
+  include ModelMapper
+
+  map_model do
+    attribute(:name) { from :id }
+  end
+
+end
+
+class AttachedExternalPartsMapper
+
+  include ModelMapper
+
+  map_model do
+    association :parts_attributes, many: true do
+      from :parts
+      with AttachedExternalPartMapper
+    end
+  end
+
+end
+
+# A primary key not named `id`.
+ActiveRecord::Migration.suppress_messages do
+  ActiveRecord::Schema.define do
+    create_table :attached_legacy_owners, primary_key: :legacy_id, force: true do |t|
+      t.string :name
+    end
+    create_table :attached_legacy_widgets, force: true do |t|
+      t.integer :legacy_owner_id
+    end
+  end
+end
+
+class AttachedLegacyOwner < ActiveRecord::Base
+
+  self.primary_key = 'legacy_id'
+
+end
+
+class AttachedLegacyWidget < ActiveRecord::Base
+
+  belongs_to :legacy_owner, class_name: 'AttachedLegacyOwner', optional: true
+  accepts_nested_attributes_for :legacy_owner
+
+end
+
+class AttachedLegacyMapper
+
+  include ModelMapper
+
+  map_model do
+    association :legacy_owner_attributes do
+      from :legacy_owner
+      with AttachedOwnerMapper
+    end
+  end
+
+end
+
 class TestSingularAttached < Minitest::Test
 
   # --- belongs_to -------------------------------------------------------------------------------------
@@ -585,6 +647,51 @@ class TestSingularAttached < Minitest::Test
     assert_predicate mapper, :valid?, mapper.errors.inspect
     widget.save!
     assert_equal 'renamed', category.reload.name
+  end
+
+  # A key the sub-mapper reads itself is data, not an identifier.
+  def test_without_allowing_an_id_the_sub_mapper_reads_is_data
+    widget = Widget.create!(name: 'w')
+
+    mapper = AttachedExternalPartsMapper.map_to_model(widget, { parts: [{ id: 'EXT-1' }] })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    assert_equal 'EXT-1', widget.parts.first.name
+  end
+
+  # A section that is not an object has no key to read: the identifier check leaves its shape alone,
+  # whatever the value (a scalar equal to the attached id or not, a list).
+  def test_without_allowing_a_non_object_section_is_not_taken_for_an_identifier
+    category = Category.create!(name: 'orig')
+    widget   = AttachedBtWidget.create!(name: 'w', category:)
+
+    [{ category: 999 }, { category: category.id }, { category: [{ name: 'x' }] }].each do |payload|
+      assert_raises(TypeError, payload.inspect) { AttachedBtMapper.map_to_model(widget, payload) }
+    end
+    assert_raises(TypeError) { AttachedPartsMapper.map_to_model(Widget.new, { parts: { name: 'x' } }) }
+  end
+
+  # The attached record's id is refused when the payload would not edit that record.
+  def test_without_allowing_the_attached_identifier_is_refused_when_it_is_not_edited
+    category = Category.create!(name: 'orig')
+    widget   = AttachedPlainBtWidget.create!(name: 'w', category:)
+
+    mapper = AttachedPlainBtMapper.map_to_model(widget, { category: { id: category.id, name: 'x' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'category.id'
+  end
+
+  # `:id` is the primary key, whatever its column is named: a string of digits names it.
+  def test_without_allowing_the_attached_identifier_is_cast_by_the_primary_key
+    owner  = AttachedLegacyOwner.create!(name: 'orig')
+    widget = AttachedLegacyWidget.create!(legacy_owner: owner)
+
+    mapper = AttachedLegacyMapper.map_to_model(widget, { legacy_owner: { id: owner.id.to_s, name: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', owner.reload.name
   end
 
   def test_many_without_allowing_refuses_an_element_identifier
