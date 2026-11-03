@@ -293,6 +293,19 @@ class AttachedLegacyMapper
 
 end
 
+# A form object, not an ActiveRecord: it builds its category itself.
+class AttachedForm
+
+  include ActiveModel::Model
+
+  attr_accessor :category
+
+  def build_category(attributes = {}) = (self.category = Category.new(attributes))
+
+  def category_attributes=(_attributes); end
+
+end
+
 class TestSingularAttached < Minitest::Test
 
   # --- belongs_to -------------------------------------------------------------------------------------
@@ -559,6 +572,43 @@ class TestSingularAttached < Minitest::Test
     assert_equal 'renamed', category.reload.name
   end
 
+  # A has_one on a strict_loading parent is read the same way.
+  def test_has_one_on_a_strict_loading_parent
+    manual = Manual.create!(title: 'orig')
+    widget = Widget.strict_loading.find(Widget.create!(name: 'w', manual:).id)
+
+    mapper = AttachedHasOneMapper.map_to_model(widget, { manual: { title: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    widget.save!
+    assert_equal 'renamed', manual.reload.title
+  end
+
+  # An ActiveRecord without `skip_strict_loading` (7.0) refuses the read: nothing attached is known, so a
+  # new record is built, as without the lookup, rather than raising.
+  def test_belongs_to_on_a_strict_loading_parent_without_skip_strict_loading
+    category = Category.create!(name: 'orig')
+    widget   = AttachedBtWidget.strict_loading.find(AttachedBtWidget.create!(name: 'w', category:).id)
+
+    mapper = without_skip_strict_loading do
+      AttachedBtMapper.map_to_model(widget, { category: { name: 'fresh' } })
+    end
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    assert_equal 'fresh', widget.category.name
+    assert_equal 'orig', category.reload.name
+  end
+
+  # A target that is not an ActiveRecord has no association to read: its own builder runs, as before.
+  def test_a_non_active_record_target_builds_through_its_own_builder
+    form = AttachedForm.new
+
+    mapper = AttachedBtMapper.map_to_model(form, { category: { name: 'form' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    assert_equal 'form', form.category.name
+  end
+
   # A record marked for destruction would be deleted by the parent's save: a new one is built instead.
   def test_belongs_to_marked_for_destruction_builds_a_record
     category = Category.create!(name: 'orig')
@@ -720,6 +770,18 @@ class TestSingularAttached < Minitest::Test
   end
 
   private
+
+  # Runs the block on an ActiveRecord whose associations lack the private `skip_strict_loading`, as on 7.0.
+  def without_skip_strict_loading
+    klass = ActiveRecord::Associations::Association
+    klass.alias_method(:__kept_skip_strict_loading, :skip_strict_loading)
+    klass.send(:remove_method, :skip_strict_loading)
+    yield
+  ensure
+    klass.alias_method(:skip_strict_loading, :__kept_skip_strict_loading)
+    klass.send(:remove_method, :__kept_skip_strict_loading)
+    klass.send(:private, :skip_strict_loading)
+  end
 
   # Runs the block and asserts it inserted no row in the model's table.
   def assert_no_new_row(model, &)

@@ -117,6 +117,32 @@ its root expects an object, which attached the record — in a collection (`part
 `parts.0`) as on a single association (`manual: 3`, refused on `manual`). A sub-mapper that reads an
 attribute raised `TypeError` on either.
 
+### Fixed — a 1‑1 sub-mapper edits the record already attached
+
+A singular association (`belongs_to` / `has_one`) mapped through `with` built a new record on every
+payload that named no id, even when the parent already held one: the previous record was left
+orphaned in the database, and on a `has_one` the build nullified its foreign key at once, a write
+during the map. The record is now resolved in order — the id sent (upsert, unchanged, including the
+refusal of a different `has_one` child), else the record the association already holds (persisted, or
+built earlier and unsaved), else a new one — like `accepts_nested_attributes_for … update_only: true`.
+On `many: true` an element without an id is still a creation.
+
+A new record is still built when editing the attached one would go wrong: the parent does not
+autosave the association (its save would drop the edit), a `belongs_to` foreign key is not yet saved
+(set by the caller, a mapped `*_id` or a hook: the record would be picked by id outside any scope),
+the record is marked for destruction, or the target is not an ActiveRecord (a form object's own
+`build_<assoc>` runs, as before). On a `has_one`, that build still nullifies the previous child's
+foreign key during the map, as it always did. A `strict_loading` parent is read without raising; on
+ActiveRecord 7.0, which cannot skip strict loading, a new record is built instead.
+
+**Breaking.** Under an upsert, a payload with no id is refused on the id path (`category.id`) when the
+record already attached sits outside `allowing` — including one of another class than the scope's, on
+a polymorphic `belongs_to` — as its id would be; it used to build a new record. And a mapper that
+relied on a 1‑1 payload always creating a fresh record now updates the attached one: a sub-mapper
+`default` then lands on a field the payload leaves out, and a `belongs_to` target shared by several
+parents changes for all of them. To replace the record, send the new record's id under an upsert
+(`belongs_to`), or replace the `has_one` child in the caller.
+
 ### Changed
 
 `false` now reaches the declared type validator on every param that declares an `allowing` — where a
@@ -207,42 +233,19 @@ false`), which it never warned about: they change too — their reader returns `
 `ModelMapper.reset_deprecation_warnings!` and `reset_explicit_null_warnings!` still exist, and do
 nothing: no warning is emitted once per param any more.
 
-### Fixed — a 1‑1 sub-mapper edits the record already attached
+### Changed — a sub-mapper without `allowing` refuses an id it would ignore
 
-A singular association (`belongs_to` / `has_one`) mapped through `with` built a new record on every
-payload that named no id, even when the parent already held one: the previous record was left
-orphaned in the database, and on a `has_one` the build nullified its foreign key at once, a write
-during the map. The record is now resolved in order — the id sent (upsert, unchanged, including the
-refusal of a different `has_one` child), else the record the association already holds (persisted, or
-built earlier and unsaved), else a new one — like `accepts_nested_attributes_for … update_only: true`.
-On `many: true` an element without an id is still a creation.
-
-A new record is still built when editing the attached one would go wrong: the parent does not
-autosave the association (its save would drop the edit), a `belongs_to` foreign key changed earlier in
-the map (the record would be picked by id outside any scope), or the record is marked for
-destruction. On a `has_one`, that build still nullifies the previous child's foreign key during the
-map, as it always did. Under an upsert, an attached record outside `allowing` — including one of
-another class than the scope's, on a polymorphic `belongs_to` — is refused on the id path, as its id
-would be. A `strict_loading` parent is read without raising.
-
-**Behaviour change:** a mapper that relied on a 1‑1 payload always creating a fresh record now updates
-the attached one. A sub-mapper `default` then lands on a field the payload leaves out, and a
-`belongs_to` target shared by several parents changes for all of them. To replace the record, send
-the new record's id under an upsert (`belongs_to`), or replace the `has_one` child in the caller.
-
-### Fixed — a sub-mapper without `allowing` refuses an id it would ignore
-
-An association declared with `with` and no `allowing`, 1‑1 or `many: true`, ignored an id in its
-section: the payload then edited or created a record other than the one it named. That id is now
-refused on its path (`address.id`, `parts.0.id`, `identifier_not_accepted`). On a 1‑1 the id of the
-record already attached is accepted, when the payload edits that record (see above) — a client may
+**Breaking.** An association declared with `with` and no `allowing`, 1‑1 or `many: true`, ignored an id
+in its section: the payload then edited or created a record other than the one it named. That id is
+now refused on its path (`address.id`, `parts.0.id`, `identifier_not_accepted`) — a client sending
+back the list it read (`parts: [{ id: 1, … }]`) now gets an error. On a 1‑1 the id of the record
+already attached is accepted, when the payload edits that record (see the entry above) — a client may
 send back the shape it read; it is taken as sent and cast by the primary key. Not weighed: a blank id,
 a key the sub-mapper reads itself as data (`attribute(:external_ref) { from :id }`), and a section that
 is not an object.
 
-**Behaviour change:** a payload that sent an id under a `with`-only association — 1‑1 or 1‑N — is now
-refused: drop the id, or declare `allowing` (`-> { Model.all }` when any record will do) to select
-records by it.
+Upgrading: drop the id from such payloads, or declare `allowing` (`-> { Model.all }` when any record
+will do) to select records by it.
 
 ## 0.5.0
 
