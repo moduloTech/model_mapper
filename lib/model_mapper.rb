@@ -302,6 +302,12 @@ module ModelMapper
         # field the caller may not write is never evaluated, and the rule's `message` — which may
         # spell out an internal policy — is never disclosed to them.
         frame_values!(value, param_config, source_params) if cleared || !value.nil?
+        # An `:enumerated` list is read by its validator rather than framing, and a clear skips the
+        # validator: weigh the clear against the list here, at the frame's place, so a list that does not
+        # name nil refuses the null as a framed list does (`[]` under `multiple true` names no value).
+        if cleared && param_config.type_value == :enumerated
+          valid_enumerated_value?(value, param_config, source_params, target_object)
+        end
       rescue ModelMapper::InvalidValueError, ModelMapper::InvalidFormatError => e
         validation_errors[e.field] = e
         errored_fields << param_name.to_s

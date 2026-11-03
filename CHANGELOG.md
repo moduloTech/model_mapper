@@ -162,9 +162,9 @@ A clear is a value like any other, so what weighs a value weighs it:
 - A framed `allowing` that does not name `nil` refuses it: `attribute(:status) { allowing %w[active
   inactive] }` given `{ status: null }` answered nothing on 0.5.0 and now answers a 422 on `status`,
   neither clearing nor ignoring it. Name `nil` in the list to accept the clear, or declare
-  `nullable false` to refuse it as a null. A `type :enumerated` list is read by its validator, not a
-  frame, and a clear does not reach the validator: an enumerated param clears on a null whatever
-  its list says, as it already did under `nullable true`.
+  `nullable false` to refuse it as a null. A `type :enumerated` list weighs it the same way: a list
+  that does not name `nil` refuses a null, where `nullable true` used to clear past it (under
+  `multiple true` the clear is `[]`, which holds no value outside the list, and is accepted).
 - Clearing a `has_one`/`has_many` reference of a persisted record is a write ActiveRecord makes at
   once, so it is refused unless the reference declares `immediate_write true` (see the entry above).
 

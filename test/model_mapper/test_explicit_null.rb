@@ -128,6 +128,28 @@ class TestExplicitNull < Minitest::Test
     assert_equal widget.id, manual.reload.widget_id
   end
 
+  # An `:enumerated` list is read by its validator rather than framing, but a clear is weighed against it
+  # all the same: a list that does not name nil refuses the null, one that does accepts the clear. Under
+  # `multiple true` the clear is [], which holds no value outside the list.
+  def test_enumerated_list_weighs_a_clear
+    refusing = mapper { attribute :status do type :enumerated; allowing %w[active inactive] end }
+    accepting = mapper { attribute :status do type :enumerated; allowing ['active', 'inactive', nil] end }
+    many = mapper { attribute :statuses do type :enumerated; multiple true; allowing %w[active inactive] end }
+
+    widget = Widget.new(status: 'active')
+    result = refusing.map_to_model(widget, { status: nil })
+    assert_equal ['status'], result.errors.keys
+    assert_kind_of ModelMapper::InvalidValueError, result.errors['status']
+    assert_equal 'active', widget.status
+
+    accepting.map_to_model!(widget, { status: nil })
+    assert_nil widget.status
+
+    widget = Widget.new(statuses: ['active'])
+    many.map_to_model!(widget, { statuses: [] })
+    assert_equal [], widget.statuses
+  end
+
   # 0.5.0 shipped them; nothing is left for them to forget, but they still answer.
   def test_reset_methods_still_exist
     assert_nil ModelMapper.reset_deprecation_warnings!

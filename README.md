@@ -611,6 +611,10 @@ attribute :tags do
 end
 ```
 
+A clearing request is weighed against the list too: `{ status: null }` is refused unless the list
+names `nil` (`allowing ['active', 'inactive', nil]`). Under `multiple true` the clear is `[]`,
+which holds no value outside the list, so it is accepted.
+
 ### `:referential` *(deprecated — use `association … allowing`)*
 
 > Looks up an ActiveRecord record by the given value and assigns its **id**. Superseded by the
