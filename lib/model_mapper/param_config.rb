@@ -190,8 +190,9 @@ module ModelMapper
       @nullable_value = value
     end
 
-    # Whether a reference `association` may be assigned when ActiveRecord would write that assignment to
-    # the database immediately: a has_one/has_many/HABTM on a persisted record, with a value that differs
+    # Whether a reference `association`, or an attribute assigned through a collection's ids writer
+    # (`part_ids`), may be assigned when ActiveRecord would write that assignment to the database
+    # immediately: a has_one/has_many/HABTM on a persisted record, with a value that differs
     # from the current one. Such a write happens during the map, before validity is known, and stays even
     # if the mapping then fails. `true` accepts it; `false` and undeclared (nil) refuse it with an
     # InvalidValueError. Undeclared is held as nil rather than false so `explicitly_set?` tells "said

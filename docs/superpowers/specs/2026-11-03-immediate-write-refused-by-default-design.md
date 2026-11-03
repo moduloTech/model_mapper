@@ -37,10 +37,16 @@ reference receiving a null or `[]`.
 
 The forecast in the loop, which ran only for `immediate_write false` params, now runs for every
 assigned param that is not `immediate_write true`. `immediate_write?` answers false at once for a new
-record, a model without associations, a belongs_to, and a param that is neither a reference nor a
-collection's ids writer; for a reference or an ids writer of a persisted record it reads the current
-records once more (the cost the previous spec accepted for `false`, now paid by undeclared references
+record or a target that is not an ActiveRecord model, and after a cheap reflection lookup for a
+belongs_to and a param that is neither a reference nor a collection's ids writer; for a reference
+or an ids writer of a persisted record it reads the current records once more (the cost the previous spec accepted for `false`, now paid by undeclared references
 too).
+
+A second consequence, already true of `false`: while a value is withheld, an exception a later rule
+raises is reported as a field error on that rule's param (its message as `details`) instead of
+propagating — the loop cannot tell it from a rule tripping over the withheld nil. It now happens
+whenever an undeclared reference is sent a change. Accepted, as the previous spec accepted it for
+`false`; the CHANGELOG says it.
 
 ## Upgrading
 

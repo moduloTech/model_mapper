@@ -123,7 +123,14 @@ the database as it found it. 0.5.0 still assigned it and warned that this releas
 warning is gone.
 
 Like any value about to be refused, it reads as `nil` to the params declared after it, as under
-`immediate_write false` in 0.5.0.
+`immediate_write false` in 0.5.0 — and, as there, while it is withheld an exception raised by a later
+rule is reported as a field error on that rule's param, its message as `details`, instead of
+propagating. Up to 0.5.0 that only happened under `immediate_write false`; it now happens whenever
+an undeclared reference is sent a change.
+
+This includes a clear: `nullable true` on a `has_one`/`has_many` reference of a persisted record,
+which the explicit-null warning of 0.5.0 suggests, is refused unless the reference also declares
+`immediate_write true`.
 
 Upgrading: a param 0.5.0 warned about (`` `parts` changed an association of a persisted record… ``)
 declares `immediate_write true` to keep writing during the map, or leaves it undeclared and has the
