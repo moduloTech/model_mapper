@@ -207,6 +207,20 @@ false`), which it never warned about: they change too — their reader returns `
 `ModelMapper.reset_deprecation_warnings!` and `reset_explicit_null_warnings!` still exist, and do
 nothing: no warning is emitted once per param any more.
 
+### Fixed — a 1‑1 sub-mapper edits the record already attached
+
+A singular association (`belongs_to` / `has_one`) mapped through `with` built a new record on every
+payload that named no id, even when the parent already held one: the previous record was left
+orphaned in the database, and on a `has_one` the build nullified its foreign key at once, a write
+during the map. The record is now resolved in order — the id sent (upsert, unchanged, including the
+refusal of a different `has_one` child), else the record the association already holds (persisted, or
+built earlier and unsaved), else a new one — like `accepts_nested_attributes_for … update_only: true`.
+`many: true` is unchanged: an element without an id is still a creation.
+
+**Behaviour change:** a mapper that relied on a 1‑1 payload always creating a fresh record now updates
+the attached one. To replace it, send the new record's id under an upsert (`belongs_to`), or replace
+the `has_one` child in the caller.
+
 ## 0.5.0
 
 ### Added — per-field authorization with `authorize`
