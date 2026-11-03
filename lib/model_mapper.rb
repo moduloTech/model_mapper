@@ -725,12 +725,22 @@ module ModelMapper
     record = load_singular_target(association)
     return nil if record.nil? || record.marked_for_destruction?
     return record unless param_config.upsert? && record.persisted?
-    return record if allowed_values(param_config, source_params).where(record.class.primary_key => [record.id]).exists?
+    return record if attached_in_scope?(record, allowed_values(param_config, source_params))
 
     field_path = reference_field_path(param_config, nil, param_config.field_value)
     validation_errors[field_path] =
       ModelMapper::InvalidValueError.new(field_path, details: I18n.t('errors.invalid_value_details.invalid_referential'))
     :rejected
+  end
+
+  # Whether the `allowing` scope holds this very record. The class is weighed as well as the key: on a
+  # polymorphic belongs_to the attached record may be of another class than the scope, and only share
+  # its id with a record the scope holds. A scope whose model cannot be read is weighed on the key alone.
+  def attached_in_scope?(record, scope)
+    model = extract_model_class(scope)
+    return false if model && !record.is_a?(model)
+
+    scope.where(record.class.primary_key => [record.id]).exists?
   end
 
   # Whether a belongs_to's foreign key (or polymorphic type) will change on the owner's next save.

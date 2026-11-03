@@ -192,6 +192,45 @@ class AttachedBtWithForeignKeyMapper
 
 end
 
+ActiveRecord::Migration.suppress_messages do
+  ActiveRecord::Schema.define do
+    create_table :attached_notes, force: true do |t|
+      t.integer :owner_id
+      t.string :owner_type
+    end
+  end
+end
+
+# A polymorphic owner: the attached record may be of any class, whatever `allowing` scopes.
+class AttachedNote < ActiveRecord::Base
+
+  belongs_to :owner, polymorphic: true, optional: true
+  accepts_nested_attributes_for :owner
+
+end
+
+class AttachedOwnerMapper
+
+  include ModelMapper
+
+  map_model { attribute :name }
+
+end
+
+class AttachedPolyUpsertMapper
+
+  include ModelMapper
+
+  map_model do
+    association :owner_attributes do
+      from :owner
+      with AttachedOwnerMapper
+      allowing -> { Part.all }
+    end
+  end
+
+end
+
 class TestSingularAttached < Minitest::Test
 
   # --- belongs_to -------------------------------------------------------------------------------------
@@ -379,6 +418,32 @@ class TestSingularAttached < Minitest::Test
     assert_predicate mapper, :valid?, mapper.errors.inspect
     widget.save!
     assert_equal 'renamed', category.reload.name
+  end
+
+  # A polymorphic owner of another class than the scope's is refused, even when the scope holds a
+  # record with the same id.
+  def test_upsert_refuses_a_polymorphic_attached_record_of_another_class
+    category = Category.create!(name: 'orig')
+    Part.find_by(id: category.id) || Part.create!(id: category.id, name: 'decoy')
+    note = AttachedNote.create!(owner: category)
+
+    mapper = AttachedPolyUpsertMapper.map_to_model(note, { owner: { name: 'renamed' } })
+
+    refute_predicate mapper, :valid?
+    assert_includes mapper.errors.keys, 'owner.id'
+    note.save!
+    assert_equal 'orig', category.reload.name
+  end
+
+  def test_upsert_edits_a_polymorphic_attached_record_of_the_scope_class
+    part = Part.create!(name: 'orig')
+    note = AttachedNote.create!(owner: part)
+
+    mapper = AttachedPolyUpsertMapper.map_to_model(note, { owner: { name: 'renamed' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    note.save!
+    assert_equal 'renamed', part.reload.name
   end
 
   # A foreign key the payload just set picks a record by id outside any scope: a new one is built.
