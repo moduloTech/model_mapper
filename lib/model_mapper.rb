@@ -765,10 +765,10 @@ module ModelMapper
   # Under an upsert the record must still sit in the `allowing` scope, as it must when its id is sent:
   # otherwise the refusal is recorded on the id path and :rejected is returned.
   #
-  # A target that is not an ActiveRecord (a form object exposing `build_<assoc>`) has no association to
-  # read: nil, so the record is built as before.
+  # A target with no ActiveRecord association of that name — a form object, or a model whose section is
+  # backed by a hand-written `build_<assoc>` — has nothing to read: nil, so the record is built as before.
   def attached_record(target, assoc, param_config, source_params, validation_errors)
-    return nil unless target.respond_to?(:association)
+    return nil unless target.class.respond_to?(:reflect_on_association) && target.class.reflect_on_association(assoc)
 
     association = target.association(assoc.to_sym)
     reflection  = association.reflection

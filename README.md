@@ -152,7 +152,7 @@ built earlier and still unsaved. A 1‑N element without an id is always a creat
 > - a `belongs_to` whose foreign key is not yet saved (set by the caller, a mapped `*_id`, a hook) is
 >   not followed: that record was picked by id outside any scope;
 > - a record marked for destruction is left to its destruction;
-> - a target that is not an ActiveRecord (a form object) builds through its own `build_<assoc>`.
+> - a target with no ActiveRecord association of that name (a form object, or a model whose section is backed by a hand-written `build_<assoc>`) builds through that builder.
 >
 > In those cases the attached record's own id is refused like any other under `with` alone: the
 > payload would not edit the record it names.
