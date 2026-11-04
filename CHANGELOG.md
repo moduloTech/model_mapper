@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 ### Fixed — `allowing` applies wherever it is declared, instead of being ignored
 
