@@ -306,6 +306,19 @@ class AttachedForm
 
 end
 
+# An ActiveRecord whose category is a plain accessor with its own builder, not an association.
+class AttachedVirtualWidget < ActiveRecord::Base
+
+  self.table_name = 'widgets'
+
+  attr_accessor :category
+
+  def build_category(attributes = {}) = (self.category = Category.new(attributes))
+
+  def category_attributes=(_attributes); end
+
+end
+
 class TestSingularAttached < Minitest::Test
 
   # --- belongs_to -------------------------------------------------------------------------------------
@@ -607,6 +620,16 @@ class TestSingularAttached < Minitest::Test
 
     assert_predicate mapper, :valid?, mapper.errors.inspect
     assert_equal 'form', form.category.name
+  end
+
+  # An ActiveRecord whose section has no association behind it builds through its own builder too.
+  def test_an_active_record_without_the_association_builds_through_its_own_builder
+    widget = AttachedVirtualWidget.new
+
+    mapper = AttachedBtMapper.map_to_model(widget, { category: { name: 'virtual' } })
+
+    assert_predicate mapper, :valid?, mapper.errors.inspect
+    assert_equal 'virtual', widget.category.name
   end
 
   # A record marked for destruction would be deleted by the parent's save: a new one is built instead.

@@ -130,8 +130,8 @@ On `many: true` an element without an id is still a creation.
 A new record is still built when editing the attached one would go wrong: the parent does not
 autosave the association (its save would drop the edit), a `belongs_to` foreign key is not yet saved
 (set by the caller, a mapped `*_id` or a hook: the record would be picked by id outside any scope),
-the record is marked for destruction, or the target is not an ActiveRecord (a form object's own
-`build_<assoc>` runs, as before). On a `has_one`, that build still nullifies the previous child's
+the record is marked for destruction, or the target has no ActiveRecord association of that name (a
+form object, or a model's hand-written `build_<assoc>`, runs its builder as before). On a `has_one`, that build still nullifies the previous child's
 foreign key during the map, as it always did. A `strict_loading` parent is read without raising; on
 ActiveRecord 7.0, which cannot skip strict loading, a new record is built instead.
 
